@@ -1,0 +1,42 @@
+experiment:
+  name: survpgc_multimodal
+  task: multimodal_survival
+  model_type: survpgc
+  output_dir: outputs/survpgc_multimodal
+
+data:
+  label_name: full
+  clinical_embedding_name: bert6
+  pathology_feature_name: uni
+  omics_source: pathway
+  rna_mode: all_genes
+
+cv:
+  n_splits: 5
+  val_size: 0.20
+  seed: 42
+
+model:
+  projection_dim: 256
+  attention_dim_head: 128
+  fusion_hidden_dims: [256, 64]
+  fusion_dropout: 0.30
+  pathology_token_cap: 4096
+  rna:
+    token_dim: 256
+    hidden_dim: 256
+    dropout: 0.25
+    top_k: 2000
+    min_genes_per_token: 10
+    min_pathway_coverage: 0.90
+
+training:
+  epochs: 300
+  patience: 40
+  batch_size: 64
+  min_events_per_batch: 3
+  training_style: rna_clinical_batch
+  lr: 0.0002
+  weight_decay: 0.00001
+  grad_clip: 5.0
+  device: cuda

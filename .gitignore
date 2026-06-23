@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+data/
+outputs/
+checkpoints/
+*.pt
+*.pth
+*.npy
+configs/data/local*.yaml

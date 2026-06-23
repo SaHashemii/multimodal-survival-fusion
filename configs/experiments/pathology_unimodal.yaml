@@ -1,0 +1,37 @@
+experiment:
+  name: pathology_unimodal_cox
+  task: unimodal_survival
+  model_type: pathology_unimodal
+  output_dir: outputs/pathology_unimodal_cox
+
+data:
+  label_name: full
+  pathology_feature_name: uni
+
+cv:
+  n_splits: 5
+  val_size: 0.20
+  seed: 42
+
+model:
+  pathology:
+    aggregator: gated
+    attn_dim: 128
+    emb_dim: 256
+    dropout: 0.20
+    tile_cap: 4096
+  head:
+    hidden_dims: [256, 64]
+    dropout: 0.30
+    activation: selu
+
+training:
+  epochs: 300
+  patience: 40
+  batch_size: 64
+  min_events_per_batch: 3
+  training_style: full_batch
+  lr: 0.0002
+  weight_decay: 0.00001
+  grad_clip: 5.0
+  device: cuda

@@ -1,0 +1,34 @@
+experiment:
+  name: clinical_unimodal_bertconch_project_concat
+  task: unimodal_survival
+  model_type: clinical_unimodal
+  output_dir: outputs/clinical_unimodal_bertconch_project_concat
+
+data:
+  label_name: full
+  clinical_source: embedding
+  clinical_embedding_name: bert6
+
+cv:
+  n_splits: 5
+  val_size: 0.20
+  seed: 42
+
+model:
+  pooling: project-concat
+  hidden_dims: [128]
+  attention_hidden_dim: 128
+  projection_dim: 512
+  activation: selu
+  dropout: 0.30
+
+training:
+  epochs: 300
+  patience: 40
+  batch_size: 64
+  min_events_per_batch: 3
+  training_style: full_batch
+  lr: 0.0002
+  weight_decay: 0.00001
+  grad_clip: 5.0
+  device: cuda

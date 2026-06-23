@@ -1,0 +1,46 @@
+# Private local data configuration.
+# This file is ignored by git through configs/data/local*.yaml.
+
+data:
+  root: /data/pathology/projects/saha/data
+
+  # Label files. Use label_name in experiment configs to select one.
+  label_name: full
+  labels:
+    full: labels.csv
+    without_urolife: labels_withoutUrolife.csv
+
+  rna: rna.csv
+  clinical_tabular: clinical.csv
+
+  # Clinical embedding/token sets. Use clinical_embedding_name in experiment configs.
+  clinical_embedding_name: bert6
+  clinical_embeddings:
+    bert6: clinical_embeddings/bert/bert6
+    bert13: clinical_embeddings/bert/bert13
+    conch6: clinical_embeddings/conch/conch6
+    conch13: clinical_embeddings/conch/conch13
+
+  # Pathology feature sets. Use pathology_feature_name in experiment configs.
+  pathology_feature_name: uni
+  pathology:
+    uni:
+      index_csv: pathology_index.csv
+      features_root: null
+    prism:
+      index_csv: null        # TODO: add PRISM pathology index CSV path.
+      features_root: null    # TODO: add PRISM pathology features root.
+
+  # Omics embedding sets. Use omics_embedding_name in experiment configs.
+  omics_embedding_name: scfoundation
+  omics_embeddings:
+    scfoundation: omics_embeddings/3072scf
+
+outputs:
+  root: /data/pathology/projects/saha/data/outputs
+
+resources:
+  biological_categories: resources/biological_categories/biological_categories.csv
+  pathway_gmt:
+    - resources/pathways/h.all.v2026.1.Hs.symbols.gmt.txt
+    # TODO: add downloaded Reactome GMT file path here.
