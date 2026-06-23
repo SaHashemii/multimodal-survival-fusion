@@ -1,0 +1,14 @@
+FEATURE,NORMAL_TEMPLATE,MISSING_TEMPLATE
+age,The patient is AGE years old.,The patient's age is unknown.
+sex,The patient is SEX.,The patient's sex is unknown.
+smoking,The patient has a history of smoking. / The patient has no history of smoking.,The patient's smoking history is unknown.
+tumor,The patient's tumor classification is TUMOR.,The patient's tumor classification is unknown.
+stage,The patient's tumor stage is STAGE.,The patient's tumor stage is unknown.
+substage,The patient's tumor substage is SUBSTAGE.,The patient's tumor substage is unknown.
+grade,The patient's tumor grade is GRADE.,The patient's tumor grade is unknown.
+reTUR,The patient underwent repeat transurethral resection before BCG induction. / The patient did not undergo repeat transurethral resection before BCG induction.,The patient's repeat transurethral resection status before BCG induction is unknown.
+LVI,Lymphovascular invasion was observed on the H&E slide. / Lymphovascular invasion was not observed on the H&E slide.,Whether lymphovascular invasion was observed on the H&E slide is unknown.
+variant,The patient's histologic variant status is VARIANT.,The patient's histologic variant status is unknown.
+EORTC,The patient's EORTC risk score is EORTC_SCORE.,The patient's EORTC risk score is unknown.
+no_instillations,The patient received NO_INSTILLATIONS intravesical BCG instillations.,The number of intravesical BCG instillations received by the patient is unknown.
+BRS,The patient's biomarker-derived BCG response subtype is BRS.,The patient's biomarker-derived BCG response subtype is unknown.
