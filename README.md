@@ -7,12 +7,63 @@ Short description of the project: multimodal survival prediction using RNA, clin
 
 ## Modalities
 List the input types:
-- RNA expression
-- Clinical tabular data
-- Clinical text embeddings
-- Pathology tile embeddings
-- scFoundation omics embeddings
-- Biological category/pathway RNA tokens
+```html
+<table>
+  <thead>
+    <tr>
+      <th>Modality</th>
+      <th>Encoder</th>
+      <th>Representation</th>
+      <th>Shape</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Pathology (WSI)</td>
+      <td>UNI</td>
+      <td>Tile embeddings</td>
+      <td><code>[N_tiles, 1024]</code></td>
+    </tr>
+    <tr>
+      <td rowspan="4">Bulk RNA-seq</td>
+      <td>scFoundation</td>
+      <td>Gene expression embeddings</td>
+      <td><code>[4, 768]</code></td>
+    </tr>
+    <tr>
+      <td>—</td>
+      <td>Raw gene expression</td>
+      <td><code>[1, 19359]</code></td>
+    </tr>
+    <tr>
+      <td>—</td>
+      <td>Pathway tokens</td>
+      <td><code>[N_pathways, N_genes_per_pathway]</code></td>
+    </tr>
+    <tr>
+      <td>—</td>
+      <td>Biological category tokens</td>
+      <td><code>[6, N_genes_per_category]</code></td>
+    </tr>
+    <tr>
+      <td rowspan="3">Clinical</td>
+      <td>—</td>
+      <td>Raw tabular</td>
+      <td><code>[1, N_vars]</code></td>
+    </tr>
+    <tr>
+      <td>BioClinical ModernBERT</td>
+      <td>Text embeddings</td>
+      <td><code>[6, 768]</code> or <code>[13, 768]</code></td>
+    </tr>
+    <tr>
+      <td>CONCH text encoder</td>
+      <td>Text embeddings</td>
+      <td><code>[6, 512]</code> or <code>[13, 512]</code></td>
+    </tr>
+  </tbody>
+</table>
+```
 
 ## Models
 Briefly list implemented model families:
