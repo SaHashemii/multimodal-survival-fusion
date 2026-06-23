@@ -6,83 +6,157 @@
 Short description of the project: multimodal survival prediction using RNA, clinical, pathology, and omics/pathway representations.
 
 ## Modalities
-List the input types:
-```html
-<table>
-  <thead>
-    <tr>
-      <th>Modality</th>
-      <th>Encoder</th>
-      <th>Representation</th>
-      <th>Shape</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Pathology (WSI)</td>
-      <td>UNI</td>
-      <td>Tile embeddings</td>
-      <td><code>[N_tiles, 1024]</code></td>
-    </tr>
-    <tr>
-      <td rowspan="4">Bulk RNA-seq</td>
-      <td>scFoundation</td>
-      <td>Gene expression embeddings</td>
-      <td><code>[4, 768]</code></td>
-    </tr>
-    <tr>
-      <td>—</td>
-      <td>Raw gene expression</td>
-      <td><code>[1, 19359]</code></td>
-    </tr>
-    <tr>
-      <td>—</td>
-      <td>Pathway tokens</td>
-      <td><code>[N_pathways, N_genes_per_pathway]</code></td>
-    </tr>
-    <tr>
-      <td>—</td>
-      <td>Biological category tokens</td>
-      <td><code>[6, N_genes_per_category]</code></td>
-    </tr>
-    <tr>
-      <td rowspan="3">Clinical</td>
-      <td>—</td>
-      <td>Raw tabular</td>
-      <td><code>[1, N_vars]</code></td>
-    </tr>
-    <tr>
-      <td>BioClinical ModernBERT</td>
-      <td>Text embeddings</td>
-      <td><code>[6, 768]</code> or <code>[13, 768]</code></td>
-    </tr>
-    <tr>
-      <td>CONCH text encoder</td>
-      <td>Text embeddings</td>
-      <td><code>[6, 512]</code> or <code>[13, 512]</code></td>
-    </tr>
-  </tbody>
-</table>
+
+### Pathology (WSI)
+
+| Encoder | Representation | Shape |
+|----------|---------------|--------|
+| UNI | Tile embeddings | `[N_tiles, 1024]` |
+
+### Bulk RNA-seq
+
+| Encoder | Representation | Shape |
+|----------|---------------|--------|
+| scFoundation | Gene expression embeddings | `[4, 768]` |
+| — | Raw gene expression | `[1, 19359]` |
+| — | Pathway tokens | `[N_pathways, N_genes_per_pathway]` |
+| — | Biological category tokens | `[6, N_genes_per_category]` |
+
+
+### Clinical
+
+| Encoder | Representation | Shape |
+|----------|---------------|--------|
+| — | Raw tabular | `[1, N_vars]` |
+| BioClinical ModernBERT | ModernBERT text embeddings | `[6, 768]` or `[13, 768]` |
+| CONCH text encoder | Text embeddings | `[6, 512]` or `[13, 512]` |
+
+
+### Foundation Model Embeddings
+
+#### RNA-seq Embeddings ([scFoundation](https://github.com/biomap-research/scFoundation))
+
+RNA-seq data were reduced in dimensionality by filtering genes using Hallmark and Reactome pathway collections. Only pathways with at least 90% gene coverage were retained, and the union of their genes was used as input to the scFoundation model. The resulting embeddings were used as RNA representations for downstream multimodal learning.
+
+#### Clinical Text Embeddings ([BioClinical ModernBERT](https://github.com/lindvalllab/BioClinical-ModernBERT/tree/main) and [CONCH](https://github.com/mahmoodlab/CONCH))
+
+Clinical variables were converted into natural language sentences before encoding. Each variable (e.g., age, sex, smoking status, tumor stage) was expressed as a descriptive sentence and encoded using BioClinical ModernBERT or the CONCH text encoder to generate contextual embeddings.
+
+**Example:**
+
+Structured input:
+
+```
+Age: 67
+Sex: Male
+Smoking: Former smoker
 ```
 
+Converted text:
+
+```
+The patient is 67 years old.
+The patient is male.
+The patient is a former smoker.
+```
+
+See [`resources/templates/clinical_embedding_sentence_templates.csv`](resources/templates/clinical_embedding_sentence_templates.csv) for the full clinical text templates.
 ## Models
-Briefly list implemented model families:
-- RNA unimodal Cox
-- Clinical unimodal Cox
-- Pathology unimodal Cox
-- Concat multimodal fusion
-- Gated concat multimodal fusion
-- Low-rank bilinear multimodal fusion
-- SurvPGC-style multimodal model
+
+This repository implements both unimodal and multimodal survival prediction models using pathology, RNA-seq, and clinical data.
+
+### Unimodal Models
+
+| Modality | Representation |
+|-----------|-----------|
+| Pathology | UNI tile embeddings |
+| RNA-seq | Variance-filtered gene expression |
+| Clinical | BioClinical ModernBERT or CONCH text embeddings |
+
+#### RNA-only Cox Model
+
+Gene expression profiles are filtered using coefficient-of-variation feature selection and processed by an MLP encoder. The resulting patient representation is used for Cox survival prediction.
+
+#### Clinical-only Cox Model
+
+Structured clinical variables are converted into natural language sentences and encoded using BioClinical ModernBERT or CONCH. The resulting embeddings are used for Cox survival prediction.
+
+#### Pathology-only Cox Model
+
+UNI tile embeddings extracted from whole-slide images are aggregated using gated attention multiple-instance learning (MIL) to generate slide-level representations for Cox survival prediction.
+
+---
+
+### Multimodal Models
+
+The repository includes multiple fusion strategies for integrating pathology, RNA-seq, and clinical information.
+
+| Fusion Strategy | Input | Modalities |
+|----------------|--------|------------|
+| Concatenation Fusion | Embeddings | P+R+C |
+| Gated Fusion | Embeddings | P+R+C |
+| Low-Rank Bilinear Fusion | Embeddings | P+R+C |
+| SurvPGC-style Co-Attention Fusion | Tokens | P+R+C |
+
+#### Concatenation Fusion
+
+Pathology, RNA-seq, and clinical embeddings are concatenated into a single feature vector and used for survival prediction.
+
+#### Gated Fusion
+
+Pathology, RNA-seq, and clinical embeddings are weighted by learnable gates before fusion, allowing the model to adaptively determine the contribution of each modality.
+
+#### Low-Rank Bilinear Fusion
+
+Interactions between pathology, RNA-seq, and clinical representations are modeled using low-rank bilinear projections, capturing pairwise cross-modal relationships before survival prediction.
+
+#### ASurvPGC-style Co-Attention Fusion
+
+Pathology, RNA-seq, and clinical tokens are projected into a shared feature space and fused through bidirectional co-attention. Separate co-attention modules model interactions between pathology-RNA and pathology-clinical representations, enabling cross-modal information exchange before survival prediction.
+
+For implementation details, see the corresponding fusion modules in the fusion/ directory.
 
 ## Repository Structure
-Explain folders:
-- `configs/data/`
-- `configs/experiments/`
-- `scripts/`
-- `src/mm_survival/`
-- `legacy/`
-- `resources/`
+
+
+```text
+multimodal-survival-fusion/
+├── configs/
+├── docs/
+├── resources/
+├── scripts/
+├── src/
+│   └── mm_survival/
+│       ├── data/
+│       ├── models/
+│       │   ├── encoders/
+│       │   └── fusion/
+│       ├── training/
+│       └── utils/
+└── tests/
+```
+
+### Folder Overview
+
+* `configs/data/`
+  Dataset configuration files defining data locations, labels, modality inputs, embeddings, and external resources.
+
+* `configs/experiments/`
+  Experiment-specific configurations defining model architectures, fusion strategies, hyperparameters, and cross-validation settings.
+
+* `scripts/`
+  Entry-point scripts for training unimodal models, multimodal fusion models, SurvPGC-style models, and generating cross-validation folds.
+
+* `src/mm_survival/`
+  Core Python package containing data loaders, modality encoders, fusion modules, survival models, training pipelines, evaluation metrics, and utility functions.
+
+* `resources/`
+  Reusable resources including pathway databases, biological category definitions, and clinical text templates.
+
+
+```
+```
+
 
 ## Configuration
 Explain:
