@@ -1,0 +1,21 @@
+# Example data configuration for multimodal survival experiments.
+# Copy this file to configs/data/local.yaml and replace paths with local values.
+# local*.yaml files are ignored by git.
+
+data:
+  root: /path/to/data
+  labels: labels.csv
+  rna: rna.csv
+  clinical_tabular: clinical.csv
+  clinical_embeddings: clinical_embeddings/
+  omics_embeddings: omics_embeddings/
+  pathology_index: pathology_index.csv
+  pathology_features_root: pathology_features/
+
+outputs:
+  root: outputs/
+
+resources:
+  biological_categories: resources/biological_categories/biological_categories.csv
+  pathway_gmt:
+    - resources/pathways/hallmark.gmt
