@@ -24,6 +24,7 @@ from mm_survival.models.multimodal_cox import MultimodalCoxModel
 from mm_survival.training.artifacts import ensure_dir, save_checkpoint, write_history, write_json
 from mm_survival.training.cross_validation import make_fold_assignments
 from mm_survival.training.embedding_trainer import evaluate_embedding_multimodal, train_embedding_multimodal
+from mm_survival.training.plots import write_kaplan_meier_plot
 from mm_survival.utils.config import load_yaml, materialize_data_config, resolve_path
 from mm_survival.utils.seed import set_seed
 
@@ -156,6 +157,7 @@ def main() -> None:
     n_splits = int(cv_cfg.get("n_splits", 5))
     folds_to_run = [args.fold] if args.fold is not None else list(range(n_splits))
     results = []
+    test_risk_tables = []
 
     for fold in folds_to_run:
         split = prepare_fold_split(
@@ -211,6 +213,7 @@ def main() -> None:
         )
         train_risk.to_csv(fold_dir / "train_risk_scores.csv", index=False)
         test_risk.to_csv(fold_dir / "test_risk_scores.csv", index=False)
+        test_risk_tables.append(test_risk.assign(fold=fold))
 
         split_summary = summarize_fold_split(dataset.labels, split)
         selected_genes = []
@@ -252,6 +255,14 @@ def main() -> None:
         "mean_c_index": float(results_df["c_index"].mean()) if not results_df.empty else None,
         "std_c_index": float(results_df["c_index"].std(ddof=0)) if not results_df.empty else None,
     }
+    if test_risk_tables:
+        all_test_risks = pd.concat(test_risk_tables, ignore_index=True)
+        all_test_risks.to_csv(output_dir / "test_risk_scores_all_folds.csv", index=False)
+        aggregate["kaplan_meier"] = write_kaplan_meier_plot(
+            all_test_risks,
+            output_dir / "kaplan_meier_by_risk.png",
+            title=str(aggregate["experiment"]),
+        )
     write_json(aggregate, output_dir / "summary.json")
     print(f"Wrote results to {output_dir}")
 

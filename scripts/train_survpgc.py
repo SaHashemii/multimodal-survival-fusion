@@ -33,6 +33,7 @@ from mm_survival.data.splits import prepare_fold_split, summarize_fold_split
 from mm_survival.models.survpgc import SurvPGCUnifiedCox
 from mm_survival.training.artifacts import ensure_dir, save_checkpoint, write_history, write_json
 from mm_survival.training.cross_validation import make_fold_assignments
+from mm_survival.training.plots import write_kaplan_meier_plot
 from mm_survival.training.survpgc_trainer import evaluate_survpgc, train_survpgc
 from mm_survival.utils.config import load_yaml, materialize_data_config, resolve_path, resolve_repo_path
 from mm_survival.utils.seed import set_seed
@@ -276,6 +277,7 @@ def main() -> None:
 
     folds_to_run = [args.fold] if args.fold is not None else list(range(int(cv_cfg.get("n_splits", 5))))
     results = []
+    test_risk_tables = []
     for fold in folds_to_run:
         split = prepare_fold_split(sample_ids, labels, fold_assignments, fold, seed=seed + fold, val_size=float(cv_cfg.get("val_size", 0.20)))
         train_omics = fit_omics = val_omics = test_omics = scfoundation_tokens
@@ -319,6 +321,7 @@ def main() -> None:
         test_ci, test_risk = evaluate_survpgc(model, test_tensors, split.test_ids)
         train_risk.to_csv(fold_dir / "train_risk_scores.csv", index=False)
         test_risk.to_csv(fold_dir / "test_risk_scores.csv", index=False)
+        test_risk_tables.append(test_risk.assign(fold=fold))
         if plan is not None:
             plan.stats.to_csv(fold_dir / "rna_token_stats.csv", index=False)
             pd.Series(plan.names).to_csv(fold_dir / "rna_token_names.txt", index=False, header=False)
@@ -350,15 +353,21 @@ def main() -> None:
 
     results_df = pd.DataFrame(results)
     results_df.to_csv(output_dir / "results_per_fold.csv", index=False)
-    write_json(
-        {
-            "experiment": exp_info.get("name", args.experiment.stem),
-            "folds": len(results),
-            "mean_c_index": float(results_df["c_index"].mean()) if not results_df.empty else None,
-            "std_c_index": float(results_df["c_index"].std(ddof=0)) if not results_df.empty else None,
-        },
-        output_dir / "summary.json",
-    )
+    aggregate = {
+        "experiment": exp_info.get("name", args.experiment.stem),
+        "folds": len(results),
+        "mean_c_index": float(results_df["c_index"].mean()) if not results_df.empty else None,
+        "std_c_index": float(results_df["c_index"].std(ddof=0)) if not results_df.empty else None,
+    }
+    if test_risk_tables:
+        all_test_risks = pd.concat(test_risk_tables, ignore_index=True)
+        all_test_risks.to_csv(output_dir / "test_risk_scores_all_folds.csv", index=False)
+        aggregate["kaplan_meier"] = write_kaplan_meier_plot(
+            all_test_risks,
+            output_dir / "kaplan_meier_by_risk.png",
+            title=str(aggregate["experiment"]),
+        )
+    write_json(aggregate, output_dir / "summary.json")
     print(f"Wrote results to {output_dir}")
 
 
