@@ -23,38 +23,52 @@ def load_clinical_table(path: str | Path) -> pd.DataFrame:
 
 def infer_numeric(col: pd.Series) -> bool:
     """Return True when a column is mostly parseable as numeric."""
-    values = pd.to_numeric(col, errors="coerce")
-    return values.notna().mean() >= 0.8
+    values = pd.to_numeric(col.replace({-1: np.nan, "-1": np.nan}), errors="coerce")
+    return np.isfinite(values).mean() >= 0.8
+
+
+def _clean_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Return clinical feature columns with legacy missing-value sentinels normalized."""
+    features = df.drop(columns=["sample_id"], errors="ignore").copy()
+    for col in features.columns:
+        features[col] = features[col].replace({-1: np.nan, "-1": np.nan})
+    return features
 
 
 def fit_clinical_preprocessor(fit: pd.DataFrame) -> dict[str, Any]:
     """Fit tabular clinical preprocessing metadata on the fit split only."""
-    feature_df = fit.drop(columns=["sample_id"], errors="ignore").copy()
+    feature_df = _clean_clinical_features(fit)
     numeric_cols = [col for col in feature_df.columns if infer_numeric(feature_df[col])]
     categorical_cols = [col for col in feature_df.columns if col not in numeric_cols]
 
     numeric_medians: dict[str, float] = {}
     numeric_means: dict[str, float] = {}
     numeric_stds: dict[str, float] = {}
+    numeric_outputs = []
     for col in numeric_cols:
         values = pd.to_numeric(feature_df[col], errors="coerce")
         median = float(values.median()) if values.notna().any() else 0.0
         filled = values.fillna(median)
         mean = float(filled.mean())
-        std = float(filled.std(ddof=0))
+        std = float(filled.std())
         numeric_medians[col] = median
         numeric_means[col] = mean
-        numeric_stds[col] = std if std > 0 else 1.0
+        numeric_stds[col] = std if np.isfinite(std) and std > 1e-8 else 1.0
+        numeric_outputs.append(((filled - numeric_means[col]) / numeric_stds[col]).rename(col))
+    fit_num = pd.concat(numeric_outputs, axis=1) if numeric_outputs else pd.DataFrame(index=feature_df.index)
 
     categorical_levels: dict[str, list[str]] = {}
+    categorical_outputs = []
     for col in categorical_cols:
-        values = feature_df[col].fillna("missing").astype(str)
+        values = feature_df[col].fillna("Missing").astype("string")
         levels = sorted(values.unique().tolist())
         categorical_levels[col] = levels
+        for level in levels:
+            categorical_outputs.append((values == level).astype(float).rename(f"{col}={level}"))
+    fit_cat = pd.concat(categorical_outputs, axis=1) if categorical_outputs else pd.DataFrame(index=feature_df.index)
 
-    kept_features = numeric_cols[:]
-    for col, levels in categorical_levels.items():
-        kept_features.extend([f"{col}={level}" for level in levels])
+    fit_processed = pd.concat([fit_num, fit_cat], axis=1)
+    kept_features = fit_processed.columns[np.var(fit_processed.values.astype(float), axis=0) > 0.0].tolist()
 
     return {
         "numeric_cols": numeric_cols,
@@ -69,23 +83,27 @@ def fit_clinical_preprocessor(fit: pd.DataFrame) -> dict[str, Any]:
 
 def transform_clinical_table(df: pd.DataFrame, meta: dict[str, Any]) -> np.ndarray:
     """Transform tabular clinical covariates with fitted metadata."""
-    feature_df = df.drop(columns=["sample_id"], errors="ignore").copy()
-    outputs = []
+    feature_df = _clean_clinical_features(df)
+    numeric_outputs = []
 
     for col in meta["numeric_cols"]:
         values = pd.to_numeric(feature_df.get(col, pd.Series(index=df.index)), errors="coerce")
         filled = values.fillna(meta["numeric_medians"][col])
         scaled = (filled - meta["numeric_means"][col]) / meta["numeric_stds"][col]
-        outputs.append(scaled.astype(float).to_numpy()[:, None])
+        numeric_outputs.append(scaled.astype(float).rename(col))
+    out_num = pd.concat(numeric_outputs, axis=1) if numeric_outputs else pd.DataFrame(index=feature_df.index)
 
+    categorical_outputs = []
     for col in meta["categorical_cols"]:
-        values = feature_df.get(col, pd.Series(index=df.index)).fillna("missing").astype(str)
+        values = feature_df.get(col, pd.Series(index=df.index)).fillna("Missing").astype("string")
         for level in meta["categorical_levels"][col]:
-            outputs.append((values == level).astype(float).to_numpy()[:, None])
+            categorical_outputs.append((values == level).astype(float).rename(f"{col}={level}"))
+    out_cat = pd.concat(categorical_outputs, axis=1) if categorical_outputs else pd.DataFrame(index=feature_df.index)
 
-    if not outputs:
+    processed = pd.concat([out_num, out_cat], axis=1).reindex(columns=meta["kept_features"], fill_value=0)
+    if processed.shape[1] == 0:
         return np.zeros((len(df), 0), dtype=np.float32)
-    return np.concatenate(outputs, axis=1).astype(np.float32)
+    return processed.values.astype(np.float32)
 
 
 def load_clinical_embedding_file(path: str | Path) -> torch.Tensor:

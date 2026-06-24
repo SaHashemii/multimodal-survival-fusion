@@ -19,6 +19,8 @@ def load_pathology_index(path: str | Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"{path} is missing required pathology index columns: {sorted(missing)}")
     df["sample_id"] = df["sample_id"].astype(str)
+    df["sample_id"] = df["sample_id"].str.replace(r"^2U_", "3U_", regex=True)
+    df["sample_id"] = df["sample_id"].str.replace(r"^2B_", "3B_", regex=True)
     df["feature_path"] = df["feature_path"].astype(str)
     return df.drop_duplicates("sample_id").set_index("sample_id")
 
