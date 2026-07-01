@@ -112,6 +112,14 @@ Interactions between pathology, RNA-seq, and clinical representations are modele
 
 Pathology, RNA-seq, and clinical tokens are projected into a shared feature space and fused through bidirectional co-attention. Separate co-attention modules model interactions between pathology-RNA and pathology-clinical representations, enabling cross-modal information exchange before survival prediction.
 
+<p align="center">
+  <img src="fusion_comparison.png" alt="Fusion Comparison" width="1000">
+</p>
+
+<p align="center">
+  <em>Comparison of the four implemented multimodal fusion strategies.</em>
+</p>
+
 For implementation details, see the fusion modules in `src/mm_survival/models/fusion/`.
 
 ## Repository Structure
