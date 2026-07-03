@@ -1,7 +1,11 @@
 # Multimodal Survival Fusion
 
 ## Overview
-Short description of the project: multimodal survival prediction using RNA, clinical, pathology, and omics/pathway representations.
+
+Survival prediction models for bladder cancer recurrence, comparing unimodal and multimodal learning across three data modalities: pathology whole-slide images, RNA-seq, and clinical data.
+
+**Goal:** Quantify the contribution of each modality to recurrence prediction and compare multimodal fusion strategies to identify the most robust approach for survival prediction.
+
 
 ## Modalities
 
