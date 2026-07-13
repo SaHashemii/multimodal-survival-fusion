@@ -2,12 +2,11 @@
 
 ## Overview
 
-Survival prediction models for bladder cancer recurrence, comparing unimodal and multimodal learning across three data modalities: pathology whole-slide images, RNA-seq, and clinical data.
+This repository provides a configurable benchmark for time-to-event prediction of BCG progression in high-risk non-muscle-invasive bladder cancer (HR-NMIBC). It compares unimodal, bimodal, and trimodal survival models using histopathology whole-slide images, bulk RNA-seq, and clinical data.
 
-**Goal:** Quantify the contribution of each modality to recurrence prediction and compare multimodal fusion strategies to identify the most robust approach for survival prediction.
+The framework evaluates multiple fusion strategies, including concatenation, scalar-gated fusion, low-rank bilinear fusion, late fusion, and SurvPGC-style co-attention. It also supports different modality representations, including UNI pathology features, tabular and text-embedding clinical inputs, variance-filtered RNA, pathway/category RNA tokens, and scFoundation embeddings.
 
-
-## Modalities
+A key focus of the project is robustness to missing RNA-seq, which is common in clinical practice. The code includes RNA-dropout training and evaluates models with both complete modalities and missing-RNA inference to compare how reliably each fusion strategy performs under realistic missing-modality conditions.
 
 ### Pathology (WSI)
 
