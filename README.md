@@ -51,7 +51,7 @@ Structured input:
 ```
 Age: 67
 Sex: Male
-Smoking: Former smoker
+Smoking: yes/no
 ```
 
 Converted text:
@@ -59,7 +59,7 @@ Converted text:
 ```
 The patient is 67 years old.
 The patient is male.
-The patient is a former smoker.
+The patient has a history of smoking.
 ```
 
 See [`resources/templates/clinical_embedding_sentence_templates.csv`](resources/templates/clinical_embedding_sentence_templates.csv) for the full clinical text templates.
