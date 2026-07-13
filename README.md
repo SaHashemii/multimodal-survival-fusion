@@ -30,8 +30,8 @@ Survival prediction models for bladder cancer recurrence, comparing unimodal and
 | Encoder | Representation | Shape |
 |----------|---------------|--------|
 | — | Raw tabular | `[1, N_vars]` |
-| BioClinical ModernBERT | ModernBERT text embeddings | `[6, 768]` or `[13, 768]` |
-| CONCH text encoder | Text embeddings | `[6, 512]` or `[13, 512]` |
+| BioClinical ModernBERT | ModernBERT text embeddings | `[5, 768]`  |
+| CONCH text encoder | Text embeddings | `[5, 512]`  |
 
 
 ### Foundation Model Embeddings
