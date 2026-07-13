@@ -199,9 +199,9 @@ Several fields in the experiment configurations select among options defined in 
 
 | Config file                                | Model / fusion                           | Clinical input             | Omics / RNA input                           | Pathology input     |
 | ------------------------------------------ | ---------------------------------------- | -------------------------- | ------------------------------------------- | ------------------- |
-| `rna_unimodal.yaml`                        | RNA-only Cox                             | Not used                   | RNA expression with variance-filtered genes | Not used            |
-| `clinical_unimodal.yaml`                   | Clinical-only Cox                        | Clinical text embeddings   | Not used                                    | Not used            |
-| `pathology_unimodal.yaml`                  | Pathology-only Cox                       | Not used                   | Not used                                    | UNI tile embeddings |
+| `rna_unimodal.yaml`                        | RNA-only Cox                             | -                  | RNA expression with variance-filtered genes | -           |
+| `clinical_unimodal.yaml`                   | Clinical-only Cox                        | Clinical text embeddings   | -                                    | -          |
+| `pathology_unimodal.yaml`                  | Pathology-only Cox                       | -                   | -                                    | UNI tile embeddings |
 | `concat.yaml`                              | Concatenation fusion                     | Tabular clinical variables | RNA expression with variance-filtered genes | UNI tile embeddings |
 | `concat_clinical_embedding.yaml`           | Concatenation fusion                     | Clinical text embeddings   | RNA expression with variance-filtered genes | UNI tile embeddings |
 | `gated_concat.yaml`                        | Gated concatenation fusion               | Tabular clinical variables | RNA expression with variance-filtered genes | UNI tile embeddings |
