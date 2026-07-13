@@ -130,3 +130,69 @@ def load_pathology_features(
             continue
         features[sample_id] = cap_tiles(feats, sample_id, seed, tile_cap)
     return features, missing_or_invalid
+
+
+def load_prism_slide_index(
+    features_root: str | Path,
+    file_suffix: str = "_HE.h5",
+) -> pd.DataFrame:
+    """Build a pathology index from a directory of PRISM slide-level .h5 files."""
+    root = Path(features_root).expanduser()
+    rows = []
+    for path in sorted(root.glob(f"*{file_suffix}")):
+        sample_id = path.name[: -len(file_suffix)]
+        rows.append({"sample_id": sample_id, "feature_path": str(path)})
+    if not rows:
+        raise FileNotFoundError(f"No PRISM files matching *{file_suffix} found in {root}")
+    df = pd.DataFrame(rows)
+    df["sample_id"] = df["sample_id"].astype(str)
+    return df.drop_duplicates("sample_id").set_index("sample_id")
+
+
+def load_prism_slide_feature_file(
+    path: str | Path,
+    feature_key: str = "features",
+) -> torch.Tensor | None:
+    """Load one PRISM slide-level embedding from an .h5 file."""
+    try:
+        import h5py
+    except ImportError as exc:
+        raise ImportError("h5py is required to load PRISM .h5 features.") from exc
+
+    try:
+        with h5py.File(path, "r") as handle:
+            if feature_key not in handle:
+                print(f"[Pathology] WARN: {path} does not contain key {feature_key!r}")
+                return None
+            feats = np.asarray(handle[feature_key])
+    except OSError as exc:
+        print(f"[Pathology] WARN: cannot load {path}: {exc}")
+        return None
+
+    feats = torch.from_numpy(feats).float()
+    if feats.ndim != 1 or feats.numel() == 0:
+        print(f"[Pathology] WARN: invalid PRISM feature shape in {path}: {tuple(feats.shape)}")
+        return None
+    return feats.contiguous()
+
+
+def load_prism_slide_features(
+    pathology_index: pd.DataFrame,
+    sample_ids: list[str],
+    feature_key: str = "features",
+) -> tuple[dict[str, torch.Tensor], list[str]]:
+    """Load PRISM slide-level embeddings for ordered sample ids."""
+    features: dict[str, torch.Tensor] = {}
+    missing_or_invalid: list[str] = []
+    for sample_id in sample_ids:
+        try:
+            feature_path = pathology_index.loc[sample_id, "feature_path"]
+        except KeyError:
+            missing_or_invalid.append(sample_id)
+            continue
+        feats = load_prism_slide_feature_file(feature_path, feature_key=feature_key)
+        if feats is None:
+            missing_or_invalid.append(sample_id)
+            continue
+        features[sample_id] = feats
+    return features, missing_or_invalid

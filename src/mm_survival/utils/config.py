@@ -73,5 +73,8 @@ def materialize_data_config(data_cfg: dict[str, Any], exp_data_cfg: dict[str, An
         pathology_cfg = pathology[selected] or {}
         resolved["pathology_index"] = pathology_cfg.get("index_csv")
         resolved["pathology_features_root"] = pathology_cfg.get("features_root")
+        resolved["pathology_representation"] = pathology_cfg.get("representation", "tile_bag")
+        resolved["pathology_file_suffix"] = pathology_cfg.get("file_suffix", "_HE.h5")
+        resolved["pathology_feature_key"] = pathology_cfg.get("feature_key", "features")
 
     return resolved

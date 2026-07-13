@@ -182,17 +182,27 @@ class SurvPGCUnifiedCox(nn.Module):
         omics: torch.Tensor,
         clinical: torch.Tensor,
         pathology_mask: torch.Tensor | None = None,
+        omics_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         path_embed = self.pathology_projection(pathology.float())
         omics_embed = self.omics_projection(self.omics_tokens(omics))
         clinic_embed = self.clinical_projection(clinical.float())
+        if omics_mask is not None:
+            sample_mask = omics_mask.reshape(-1, 1, 1).to(device=omics_embed.device, dtype=omics_embed.dtype)
+            omics_embed = omics_embed * sample_mask
 
         tokens_omics_path = torch.cat([omics_embed, path_embed], dim=1)
         tokens_clinic_path = torch.cat([clinic_embed, path_embed], dim=1)
 
-        # Kept faithful to the current SurvPGC scripts: padding masks are not
-        # applied inside attention.
-        mm_omics_path = self.omics_pathology_attn(tokens_omics_path, mask=None)
+        omics_path_mask = None
+        if omics_mask is not None:
+            omics_keep = omics_mask.reshape(-1, 1).to(device=pathology.device, dtype=torch.bool).expand(-1, self.num_omics)
+            path_keep = torch.ones(path_embed.shape[:2], dtype=torch.bool, device=pathology.device)
+            omics_path_mask = torch.cat([omics_keep, path_keep], dim=1)
+
+        # Kept faithful to the current SurvPGC scripts for ordinary runs:
+        # padding masks are not applied unless an RNA/omics availability mask is provided.
+        mm_omics_path = self.omics_pathology_attn(tokens_omics_path, mask=omics_path_mask)
         mm_clinic_path = self.clinical_pathology_attn(tokens_clinic_path, mask=None)
 
         mm_omics_path = self.layer_norm(self.feed_forward(mm_omics_path))
@@ -200,6 +210,10 @@ class SurvPGCUnifiedCox(nn.Module):
 
         omics_post = mm_omics_path[:, : self.num_omics, :].mean(dim=1)
         path_post_omics = mm_omics_path[:, self.num_omics :, :].mean(dim=1)
+        if omics_mask is not None:
+            sample_mask = omics_mask.reshape(-1, 1).to(device=omics_post.device, dtype=omics_post.dtype)
+            omics_post = omics_post * sample_mask
+            path_post_omics = path_post_omics * sample_mask
         clinic_post = mm_clinic_path[:, : self.num_clinic, :].mean(dim=1)
         path_post_clinic = mm_clinic_path[:, self.num_clinic :, :].mean(dim=1)
         return torch.cat([omics_post, path_post_omics, clinic_post, path_post_clinic], dim=1)
@@ -210,6 +224,7 @@ class SurvPGCUnifiedCox(nn.Module):
         omics: torch.Tensor,
         clinical: torch.Tensor,
         pathology_mask: torch.Tensor | None = None,
+        omics_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        fused = self.fused_representation(pathology, omics, clinical, pathology_mask)
+        fused = self.fused_representation(pathology, omics, clinical, pathology_mask, omics_mask=omics_mask)
         return self.head(fused).squeeze(-1)

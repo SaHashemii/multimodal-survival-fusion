@@ -1,14 +1,15 @@
 experiment:
-  name: gated_concat_clinical_embedding
+  name: gated_rna_clinical_embedding
   task: multimodal_survival
-  model_type: embedding_multimodal
-  output_dir: outputs/gated_concat_clinical_embedding
+  model_type: two_modality_gated
+  output_dir: outputs/gated_rna_clinical_embedding
 
 data:
-  label_name: full
+  label_name: without_urolife
   clinical_source: embedding
-  clinical_embedding_name: bert6
+  clinical_embedding_name: conch5
   pathology_feature_name: uni
+  modalities: [rna, clinical]
 
 cv:
   n_splits: 5
@@ -16,8 +17,6 @@ cv:
   seed: 42
 
 model:
-  fusion:
-    name: gated_concat
   rna:
     extractor: variance_filter
     top_k: 2000
@@ -41,7 +40,9 @@ model:
     dropout: 0.20
     tile_cap: 4096
   head:
-    hidden_dims: [256, 64]
+    # previous_hidden_dims: [256, 64]
+    # previous_reduced_hidden_dims: [128]
+    hidden_dims: [128]
     dropout: 0.30
     activation: selu
 

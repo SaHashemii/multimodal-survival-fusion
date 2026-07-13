@@ -5,8 +5,8 @@ experiment:
   output_dir: outputs/survpgc_category
 
 data:
-  label_name: full
-  clinical_embedding_name: bert6
+  label_name: without_urolife
+  clinical_embedding_name: conch5
   pathology_feature_name: uni
   omics_source: category
   rna_mode: all_genes
@@ -15,6 +15,9 @@ cv:
   n_splits: 5
   val_size: 0.20
   seed: 42
+
+missing_rna:
+  rna_dropout_prob: 0.30
 
 model:
   projection_dim: 256

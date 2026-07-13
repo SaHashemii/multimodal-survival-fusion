@@ -49,8 +49,13 @@ class PairwiseLowRankBilinearFusion(nn.Module):
         rna_emb: torch.Tensor,
         clinical_emb: torch.Tensor,
         pathology_emb: torch.Tensor,
+        rna_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         pathology_rna = self.pathology_rna(pathology_emb, rna_emb)
         pathology_clinical = self.pathology_clinical(pathology_emb, clinical_emb)
         rna_clinical = self.rna_clinical(rna_emb, clinical_emb)
+        if rna_mask is not None:
+            mask = rna_mask.reshape(-1, 1).to(device=rna_emb.device, dtype=rna_emb.dtype)
+            pathology_rna = pathology_rna * mask
+            rna_clinical = rna_clinical * mask
         return torch.cat([pathology_rna, pathology_clinical, rna_clinical], dim=-1)

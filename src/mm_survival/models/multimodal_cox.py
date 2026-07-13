@@ -115,9 +115,10 @@ class MultimodalCoxModel(nn.Module):
         rna_emb: torch.Tensor,
         clinical_emb: torch.Tensor,
         pathology_emb: torch.Tensor,
+        rna_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Fuse modality embeddings, ignoring optional interpretability payloads."""
-        fused = self.fusion(rna_emb, clinical_emb, pathology_emb)
+        fused = self.fusion(rna_emb, clinical_emb, pathology_emb, rna_mask=rna_mask)
         if isinstance(fused, tuple):
             fused = fused[0]
         return fused
@@ -128,10 +129,11 @@ class MultimodalCoxModel(nn.Module):
         clinical: torch.Tensor,
         pathology_bags: list[torch.Tensor],
         device: torch.device | None = None,
+        rna_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return one log-risk score per sample."""
         rna_emb, clinical_emb, pathology_emb = self.encode_modalities(rna, clinical, pathology_bags, device=device)
-        fused = self.fuse(rna_emb, clinical_emb, pathology_emb)
+        fused = self.fuse(rna_emb, clinical_emb, pathology_emb, rna_mask=rna_mask)
         return self.head(fused)
 
     def forward(

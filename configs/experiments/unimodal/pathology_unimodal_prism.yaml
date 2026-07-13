@@ -1,11 +1,12 @@
 experiment:
-  name: rna_unimodal_variance_filter_cox
+  name: pathology_unimodal_prism_cox
   task: unimodal_survival
-  model_type: rna_unimodal
-  output_dir: outputs/rna_unimodal_variance_filter_cox
+  model_type: pathology_unimodal
+  output_dir: outputs/pathology_unimodal_prism_cox
 
 data:
   label_name: full
+  pathology_feature_name: prism
 
 cv:
   n_splits: 5
@@ -13,15 +14,13 @@ cv:
   seed: 42
 
 model:
-  rna:
-    extractor: variance_filter
-    top_k: 2000
-    use_cv: true
-    hidden_dims: [512, 256]
-    out_dim: 256
-    dropout: 0.25
+  pathology:
+    representation: slide_embedding
+    in_dim: 1280
+    hidden_dims: [512]
+    emb_dim: 256
+    dropout: 0.30
     activation: selu
-    input_norm: true
   head:
     hidden_dims: [256, 64]
     dropout: 0.30

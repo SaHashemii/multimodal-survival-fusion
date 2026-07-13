@@ -1,0 +1,18 @@
+experiment:
+  name: late_fusion
+  task: multimodal_survival
+  model_type: late_fusion
+  output_dir: outputs/late_fusion
+
+data:
+  label_name: full
+
+inputs:
+  rna_output_dir: outputs/rna_unimodal_variance_filter_cox
+  pathology_output_dir: outputs/pathology_unimodal_cox
+  clinical_output_dir: outputs/clinical_unimodal_bertconch_project_concat
+
+fusion:
+  methods:
+    - mean
+    - learned_cox

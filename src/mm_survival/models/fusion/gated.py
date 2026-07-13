@@ -45,8 +45,13 @@ class ModalityGatedConcatFusion(nn.Module):
         rna_emb: torch.Tensor,
         clinical_emb: torch.Tensor,
         pathology_emb: torch.Tensor,
+        rna_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         rna_gated, rna_gate = self.rna_gate(rna_emb)
+        if rna_mask is not None:
+            mask = rna_mask.reshape(-1, 1).to(device=rna_emb.device, dtype=rna_emb.dtype)
+            rna_gated = rna_gated * mask
+            rna_gate = rna_gate * mask.squeeze(-1)
         clinical_gated, clinical_gate = self.clinical_gate(clinical_emb)
         pathology_gated, pathology_gate = self.pathology_gate(pathology_emb)
 

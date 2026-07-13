@@ -25,6 +25,7 @@ from mm_survival.training.artifacts import ensure_dir, save_checkpoint, write_hi
 from mm_survival.training.cross_validation import make_fold_assignments
 from mm_survival.training.embedding_trainer import evaluate_embedding_multimodal, train_embedding_multimodal
 from mm_survival.training.plots import write_kaplan_meier_plot
+from mm_survival.training.rna_missing import make_rna_observed_mask, missing_rna_mask_like, save_rna_mask
 from mm_survival.utils.config import load_yaml, materialize_data_config, resolve_path
 from mm_survival.utils.seed import set_seed
 
@@ -118,6 +119,11 @@ def _load_or_make_folds(dataset, cv_cfg: dict, output_dir: Path, fold_assignment
     return folds
 
 
+def _rna_dropout_prob(exp_cfg: dict, train_cfg: dict) -> float:
+    missing_cfg = exp_cfg.get("missing_rna", {})
+    return float(missing_cfg.get("rna_dropout_prob", train_cfg.get("rna_dropout_prob", exp_cfg.get("rna_dropout_prob", 0.0))))
+
+
 def main() -> None:
     args = parse_args()
     exp_cfg = load_yaml(args.experiment)
@@ -130,6 +136,8 @@ def main() -> None:
     cv_cfg = exp_cfg.get("cv", {})
     train_cfg = exp_cfg.get("training", {})
     model_cfg = exp_cfg.get("model", {})
+    rna_dropout_prob = _rna_dropout_prob(exp_cfg, train_cfg)
+    robust_missing_rna = rna_dropout_prob > 0.0
 
     if exp_info.get("model_type") != "embedding_multimodal":
         raise ValueError("scripts/train_cv.py currently supports model_type=embedding_multimodal only.")
@@ -158,6 +166,8 @@ def main() -> None:
     folds_to_run = [args.fold] if args.fold is not None else list(range(n_splits))
     results = []
     test_risk_tables = []
+    test_risk_complete_tables = []
+    test_risk_missing_tables = []
 
     for fold in folds_to_run:
         split = prepare_fold_split(
@@ -174,9 +184,19 @@ def main() -> None:
             clinical_source=clinical_source,
             device=device,
         )
+        fold_dir = ensure_dir(output_dir / f"fold_{fold}")
         pathology_in_dim = int(fold_data.pathology_train[0].shape[1])
         set_seed(seed + fold)
         model = _build_model(exp_cfg, fold_data, pathology_in_dim, clinical_source, device)
+        rna_fit_mask = None
+        if robust_missing_rna:
+            rna_fit_mask = make_rna_observed_mask(
+                n_samples=len(split.fit_ids),
+                dropout_prob=rna_dropout_prob,
+                seed=seed + fold,
+                device=device,
+            )
+            save_rna_mask(split.fit_ids, rna_fit_mask, fold_dir / "rna_dropout_mask.csv")
 
         model, history = train_embedding_multimodal(
             model,
@@ -193,9 +213,10 @@ def main() -> None:
             lr=float(train_cfg.get("lr", 2e-4)),
             weight_decay=float(train_cfg.get("weight_decay", 1e-5)),
             grad_clip=float(train_cfg.get("grad_clip", 5.0)),
+            rna_train_mask=rna_fit_mask,
+            robust_missing_rna=robust_missing_rna,
         )
 
-        fold_dir = ensure_dir(output_dir / f"fold_{fold}")
         write_history(history, fold_dir / "history.csv")
         train_ci, train_risk = evaluate_embedding_multimodal(
             model,
@@ -211,9 +232,26 @@ def main() -> None:
             split.test_ids,
             device,
         )
+        missing_test_ci = None
+        missing_test_risk = None
+        if robust_missing_rna:
+            missing_test_mask = missing_rna_mask_like(fold_data.test_tensors[0])
+            missing_test_ci, missing_test_risk = evaluate_embedding_multimodal(
+                model,
+                fold_data.test_tensors,
+                fold_data.pathology_test,
+                split.test_ids,
+                device,
+                rna_mask=missing_test_mask,
+            )
         train_risk.to_csv(fold_dir / "train_risk_scores.csv", index=False)
         test_risk.to_csv(fold_dir / "test_risk_scores.csv", index=False)
         test_risk_tables.append(test_risk.assign(fold=fold))
+        if robust_missing_rna and missing_test_risk is not None:
+            test_risk.to_csv(fold_dir / "test_risk_scores_complete.csv", index=False)
+            missing_test_risk.to_csv(fold_dir / "test_risk_scores_missing_rna.csv", index=False)
+            test_risk_complete_tables.append(test_risk.assign(fold=fold))
+            test_risk_missing_tables.append(missing_test_risk.assign(fold=fold))
 
         split_summary = summarize_fold_split(dataset.labels, split)
         selected_genes = []
@@ -231,7 +269,16 @@ def main() -> None:
             "pathology_in_dim": pathology_in_dim,
             "selected_gene_count": len(selected_genes),
             "fusion": model_cfg.get("fusion", {}).get("name", "concat"),
+            "rna_dropout_prob": rna_dropout_prob,
         }
+        if robust_missing_rna:
+            summary.update(
+                {
+                    "complete_c_index": test_ci,
+                    "missing_rna_c_index": missing_test_ci,
+                    "performance_drop": test_ci - missing_test_ci if missing_test_ci is not None else None,
+                }
+            )
         write_json(summary, fold_dir / "summary.json")
         write_json(fold_data.rna_medians, fold_dir / "rna_imputation_medians.json")
         write_json(fold_data.clinical_metadata, fold_dir / "clinical_metadata.json")
@@ -244,7 +291,13 @@ def main() -> None:
                 "experiment_config": exp_cfg,
             },
         )
-        print(f"[fold {fold}] test_c_index={test_ci:.4f} train_c_index={train_ci:.4f}")
+        if robust_missing_rna and missing_test_ci is not None:
+            print(
+                f"[fold {fold}] complete_c_index={test_ci:.4f} "
+                f"missing_rna_c_index={missing_test_ci:.4f} train_c_index={train_ci:.4f}"
+            )
+        else:
+            print(f"[fold {fold}] test_c_index={test_ci:.4f} train_c_index={train_ci:.4f}")
         results.append(summary)
 
     results_df = pd.DataFrame(results)
@@ -254,8 +307,35 @@ def main() -> None:
         "folds": len(results),
         "mean_c_index": float(results_df["c_index"].mean()) if not results_df.empty else None,
         "std_c_index": float(results_df["c_index"].std(ddof=0)) if not results_df.empty else None,
+        "rna_dropout_prob": rna_dropout_prob,
     }
-    if test_risk_tables:
+    if robust_missing_rna and not results_df.empty:
+        aggregate.update(
+            {
+                "mean_complete_c_index": float(results_df["complete_c_index"].mean()),
+                "std_complete_c_index": float(results_df["complete_c_index"].std(ddof=0)),
+                "mean_missing_rna_c_index": float(results_df["missing_rna_c_index"].mean()),
+                "std_missing_rna_c_index": float(results_df["missing_rna_c_index"].std(ddof=0)),
+                "mean_performance_drop": float(results_df["performance_drop"].mean()),
+                "std_performance_drop": float(results_df["performance_drop"].std(ddof=0)),
+            }
+        )
+    if robust_missing_rna and test_risk_complete_tables and test_risk_missing_tables:
+        all_complete_risks = pd.concat(test_risk_complete_tables, ignore_index=True)
+        all_missing_risks = pd.concat(test_risk_missing_tables, ignore_index=True)
+        all_complete_risks.to_csv(output_dir / "test_risk_scores_complete_all_folds.csv", index=False)
+        all_missing_risks.to_csv(output_dir / "test_risk_scores_missing_rna_all_folds.csv", index=False)
+        aggregate["kaplan_meier_complete"] = write_kaplan_meier_plot(
+            all_complete_risks,
+            output_dir / "kaplan_meier_complete.png",
+            title=f"{aggregate['experiment']} complete",
+        )
+        aggregate["kaplan_meier_missing_rna"] = write_kaplan_meier_plot(
+            all_missing_risks,
+            output_dir / "kaplan_meier_missing_rna.png",
+            title=f"{aggregate['experiment']} missing RNA",
+        )
+    elif test_risk_tables:
         all_test_risks = pd.concat(test_risk_tables, ignore_index=True)
         all_test_risks.to_csv(output_dir / "test_risk_scores_all_folds.csv", index=False)
         aggregate["kaplan_meier"] = write_kaplan_meier_plot(

@@ -1,14 +1,15 @@
 experiment:
-  name: lowrank_bilinear_clinical_embedding
+  name: lowrank_rna_clinical_embedding
   task: multimodal_survival
-  model_type: embedding_multimodal
-  output_dir: outputs/lowrank_bilinear_clinical_embedding
+  model_type: two_modality_lowrank
+  output_dir: outputs/lowrank_rna_clinical_embedding
 
 data:
-  label_name: full
+  label_name: without_urolife
   clinical_source: embedding
-  clinical_embedding_name: bert6
+  clinical_embedding_name: conch5
   pathology_feature_name: uni
+  modalities: [rna, clinical]
 
 cv:
   n_splits: 5
@@ -17,11 +18,8 @@ cv:
 
 model:
   fusion:
-    name: lowrank_bilinear
     rank: 64
-    pathology_rna_out_dim: 256
-    pathology_clinical_out_dim: 192
-    rna_clinical_out_dim: 192
+    out_dim: 64
   rna:
     extractor: variance_filter
     top_k: 2000
@@ -45,7 +43,11 @@ model:
     dropout: 0.20
     tile_cap: 4096
   head:
-    hidden_dims: [256, 64]
+    # previous_hidden_dims: [256, 64]
+    # previous_reduced_hidden_dims: [128]
+    # previous_current_hidden_dims: [64]
+    # previous_lowrank_hidden_dims: []
+    hidden_dims: [128]
     dropout: 0.30
     activation: selu
 

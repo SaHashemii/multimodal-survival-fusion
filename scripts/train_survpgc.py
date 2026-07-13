@@ -34,6 +34,7 @@ from mm_survival.models.survpgc import SurvPGCUnifiedCox
 from mm_survival.training.artifacts import ensure_dir, save_checkpoint, write_history, write_json
 from mm_survival.training.cross_validation import make_fold_assignments
 from mm_survival.training.plots import write_kaplan_meier_plot
+from mm_survival.training.rna_missing import make_rna_observed_mask, missing_rna_mask_like, save_rna_mask
 from mm_survival.training.survpgc_trainer import evaluate_survpgc, train_survpgc
 from mm_survival.utils.config import load_yaml, materialize_data_config, resolve_path, resolve_repo_path
 from mm_survival.utils.seed import set_seed
@@ -240,6 +241,11 @@ def build_model(exp_cfg: dict, args_shape: dict, rna_gene_indices, device: torch
     ).to(device)
 
 
+def rna_dropout_prob(exp_cfg: dict, train_cfg: dict) -> float:
+    missing_cfg = exp_cfg.get("missing_rna", {})
+    return float(missing_cfg.get("rna_dropout_prob", train_cfg.get("rna_dropout_prob", exp_cfg.get("rna_dropout_prob", 0.0))))
+
+
 def main() -> None:
     args = parse_args()
     exp_cfg = load_yaml(args.experiment)
@@ -252,6 +258,8 @@ def main() -> None:
     cv_cfg = exp_cfg.get("cv", {})
     train_cfg = exp_cfg.get("training", {})
     omics_source = surv_data_cfg.get("omics_source", "pathway")
+    dropout_prob = rna_dropout_prob(exp_cfg, train_cfg)
+    robust_missing_rna = dropout_prob > 0.0
 
     if exp_info.get("model_type") != "survpgc":
         raise ValueError("scripts/train_survpgc.py requires model_type=survpgc.")
@@ -278,6 +286,8 @@ def main() -> None:
     folds_to_run = [args.fold] if args.fold is not None else list(range(int(cv_cfg.get("n_splits", 5))))
     results = []
     test_risk_tables = []
+    test_risk_complete_tables = []
+    test_risk_missing_tables = []
     for fold in folds_to_run:
         split = prepare_fold_split(sample_ids, labels, fold_assignments, fold, seed=seed + fold, val_size=float(cv_cfg.get("val_size", 0.20)))
         train_omics = fit_omics = val_omics = test_omics = scfoundation_tokens
@@ -300,6 +310,16 @@ def main() -> None:
         }
         set_seed(seed + fold)
         model = build_model(exp_cfg, shape, plan.gene_indices if plan is not None else None, device)
+        fold_dir = ensure_dir(output_dir / f"fold_{fold}")
+        omics_fit_mask = None
+        if robust_missing_rna:
+            omics_fit_mask = make_rna_observed_mask(
+                n_samples=len(split.fit_ids),
+                dropout_prob=dropout_prob,
+                seed=seed + fold,
+                device=device,
+            )
+            save_rna_mask(split.fit_ids, omics_fit_mask, fold_dir / "rna_dropout_mask.csv")
         model, history = train_survpgc(
             model,
             fit_tensors,
@@ -313,15 +333,31 @@ def main() -> None:
             lr=float(train_cfg.get("lr", 2e-4)),
             weight_decay=float(train_cfg.get("weight_decay", 1e-5)),
             grad_clip=float(train_cfg.get("grad_clip", 5.0)),
+            omics_train_mask=omics_fit_mask,
+            robust_missing_rna=robust_missing_rna,
         )
 
-        fold_dir = ensure_dir(output_dir / f"fold_{fold}")
         write_history(history, fold_dir / "history.csv")
         train_ci, train_risk = evaluate_survpgc(model, train_tensors, split.train_ids)
         test_ci, test_risk = evaluate_survpgc(model, test_tensors, split.test_ids)
+        missing_test_ci = None
+        missing_test_risk = None
+        if robust_missing_rna:
+            missing_test_mask = missing_rna_mask_like(test_tensors[1])
+            missing_test_ci, missing_test_risk = evaluate_survpgc(
+                model,
+                test_tensors,
+                split.test_ids,
+                omics_mask=missing_test_mask,
+            )
         train_risk.to_csv(fold_dir / "train_risk_scores.csv", index=False)
         test_risk.to_csv(fold_dir / "test_risk_scores.csv", index=False)
         test_risk_tables.append(test_risk.assign(fold=fold))
+        if robust_missing_rna and missing_test_risk is not None:
+            test_risk.to_csv(fold_dir / "test_risk_scores_complete.csv", index=False)
+            missing_test_risk.to_csv(fold_dir / "test_risk_scores_missing_rna.csv", index=False)
+            test_risk_complete_tables.append(test_risk.assign(fold=fold))
+            test_risk_missing_tables.append(missing_test_risk.assign(fold=fold))
         if plan is not None:
             plan.stats.to_csv(fold_dir / "rna_token_stats.csv", index=False)
             pd.Series(plan.names).to_csv(fold_dir / "rna_token_names.txt", index=False, header=False)
@@ -340,7 +376,16 @@ def main() -> None:
             "pathology_in_dim": shape["pathology_in_dim"],
             "clinical_token_count": shape["clinical_token_count"],
             "clinical_in_dim": shape["clinical_in_dim"],
+            "rna_dropout_prob": dropout_prob,
         }
+        if robust_missing_rna:
+            summary.update(
+                {
+                    "complete_c_index": test_ci,
+                    "missing_rna_c_index": missing_test_ci,
+                    "performance_drop": test_ci - missing_test_ci if missing_test_ci is not None else None,
+                }
+            )
         write_json(summary, fold_dir / "summary.json")
         save_checkpoint(
             fold_dir / "model.pt",
@@ -348,7 +393,13 @@ def main() -> None:
             summary,
             extra={"experiment_config": exp_cfg},
         )
-        print(f"[fold {fold}] test_c_index={test_ci:.4f} train_c_index={train_ci:.4f}")
+        if robust_missing_rna and missing_test_ci is not None:
+            print(
+                f"[fold {fold}] complete_c_index={test_ci:.4f} "
+                f"missing_rna_c_index={missing_test_ci:.4f} train_c_index={train_ci:.4f}"
+            )
+        else:
+            print(f"[fold {fold}] test_c_index={test_ci:.4f} train_c_index={train_ci:.4f}")
         results.append(summary)
 
     results_df = pd.DataFrame(results)
@@ -358,8 +409,35 @@ def main() -> None:
         "folds": len(results),
         "mean_c_index": float(results_df["c_index"].mean()) if not results_df.empty else None,
         "std_c_index": float(results_df["c_index"].std(ddof=0)) if not results_df.empty else None,
+        "rna_dropout_prob": dropout_prob,
     }
-    if test_risk_tables:
+    if robust_missing_rna and not results_df.empty:
+        aggregate.update(
+            {
+                "mean_complete_c_index": float(results_df["complete_c_index"].mean()),
+                "std_complete_c_index": float(results_df["complete_c_index"].std(ddof=0)),
+                "mean_missing_rna_c_index": float(results_df["missing_rna_c_index"].mean()),
+                "std_missing_rna_c_index": float(results_df["missing_rna_c_index"].std(ddof=0)),
+                "mean_performance_drop": float(results_df["performance_drop"].mean()),
+                "std_performance_drop": float(results_df["performance_drop"].std(ddof=0)),
+            }
+        )
+    if robust_missing_rna and test_risk_complete_tables and test_risk_missing_tables:
+        all_complete_risks = pd.concat(test_risk_complete_tables, ignore_index=True)
+        all_missing_risks = pd.concat(test_risk_missing_tables, ignore_index=True)
+        all_complete_risks.to_csv(output_dir / "test_risk_scores_complete_all_folds.csv", index=False)
+        all_missing_risks.to_csv(output_dir / "test_risk_scores_missing_rna_all_folds.csv", index=False)
+        aggregate["kaplan_meier_complete"] = write_kaplan_meier_plot(
+            all_complete_risks,
+            output_dir / "kaplan_meier_complete.png",
+            title=f"{aggregate['experiment']} complete",
+        )
+        aggregate["kaplan_meier_missing_rna"] = write_kaplan_meier_plot(
+            all_missing_risks,
+            output_dir / "kaplan_meier_missing_rna.png",
+            title=f"{aggregate['experiment']} missing RNA",
+        )
+    elif test_risk_tables:
         all_test_risks = pd.concat(test_risk_tables, ignore_index=True)
         all_test_risks.to_csv(output_dir / "test_risk_scores_all_folds.csv", index=False)
         aggregate["kaplan_meier"] = write_kaplan_meier_plot(

@@ -5,9 +5,9 @@ experiment:
   output_dir: outputs/clinical_unimodal_bertconch_project_concat
 
 data:
-  label_name: full
+  label_name: urolife
   clinical_source: embedding
-  clinical_embedding_name: bert6
+  clinical_embedding_name: conch5
 
 cv:
   n_splits: 5

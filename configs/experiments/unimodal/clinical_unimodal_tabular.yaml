@@ -1,0 +1,35 @@
+experiment:
+  name: clinical_unimodal_tabular_concat_dims
+  task: unimodal_survival
+  model_type: clinical_unimodal
+  output_dir: outputs/clinical_unimodal_tabular_small_mlp
+
+data:
+  label_name: without_urolife
+  clinical_source: tabular
+
+cv:
+  n_splits: 5
+  val_size: 0.20
+  seed: 42
+
+model:
+  # previous_hidden_dims: [32]
+  # previous_projection_dim: 16
+  # previous_concat_hidden_dims: [256, 128]
+  # previous_hkkh_projection_dim: 27
+  hidden_dims: [256,128]
+  projection_dim: 128
+  dropout: 0.20
+  activation: selu
+
+training:
+  epochs: 300
+  patience: 40
+  batch_size: 64
+  min_events_per_batch: 3
+  training_style: full_batch
+  lr: 0.0002
+  weight_decay: 0.00001
+  grad_clip: 5.0
+  device: cuda

@@ -1,0 +1,56 @@
+experiment:
+  name: gated_pathology_clinical
+  task: multimodal_survival
+  model_type: two_modality_gated
+  output_dir: outputs/gated_pathology_clinical
+
+data:
+  label_name: without_urolife
+  clinical_source: tabular
+  pathology_feature_name: uni
+  modalities: [pathology, clinical]
+
+cv:
+  n_splits: 5
+  val_size: 0.20
+  seed: 42
+
+model:
+  rna:
+    extractor: variance_filter
+    top_k: 2000
+    use_cv: true
+    hidden_dims: [512, 256]
+    out_dim: 256
+    dropout: 0.25
+    activation: selu
+    input_norm: true
+  clinical:
+    hidden_dims: [256, 128]
+    emb_dim: 128
+    token_hidden_dim: 256
+    token_out_dim: 128
+    dropout: 0.20
+    activation: selu
+  pathology:
+    aggregator: gated
+    attn_dim: 128
+    emb_dim: 256
+    dropout: 0.20
+    tile_cap: 4096
+  head:
+    # previous_hidden_dims: [256, 64]
+    hidden_dims: [128]
+    dropout: 0.30
+    activation: selu
+
+training:
+  epochs: 300
+  patience: 40
+  batch_size: 64
+  min_events_per_batch: 3
+  training_style: rna_clinical_batch
+  lr: 0.0002
+  weight_decay: 0.00001
+  grad_clip: 5.0
+  device: cuda

@@ -14,6 +14,7 @@ from torch import nn
 from mm_survival.training.cross_validation import event_aware_batch_indices
 from mm_survival.training.losses import cox_ph_loss
 from mm_survival.training.metrics import concordance_index
+from mm_survival.training.rna_missing import apply_rna_mask, missing_rna_mask_like
 
 
 SurvPGCTensors = tuple[
@@ -44,6 +45,19 @@ def _make_batches(
     raise ValueError(f"Unknown training_style: {training_style}")
 
 
+def _forward_all(
+    model: nn.Module,
+    pathology: torch.Tensor,
+    omics: torch.Tensor,
+    clinical: torch.Tensor,
+    pathology_mask: torch.Tensor,
+    omics_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if omics_mask is None:
+        return model.forward_all(pathology, omics, clinical, pathology_mask)
+    return model.forward_all(pathology, omics, clinical, pathology_mask, omics_mask=omics_mask)
+
+
 def train_survpgc(
     model: nn.Module,
     train_tensors: SurvPGCTensors,
@@ -58,6 +72,8 @@ def train_survpgc(
     lr: float = 2e-4,
     weight_decay: float = 1e-5,
     grad_clip: float = 5.0,
+    omics_train_mask: torch.Tensor | None = None,
+    robust_missing_rna: bool = False,
 ) -> tuple[nn.Module, pd.DataFrame]:
     """Train a SurvPGC-style token Cox model."""
     pathology_train, omics_train, clinical_train, mask_train, time_train, event_train = train_tensors
@@ -67,6 +83,7 @@ def train_survpgc(
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     best_state = deepcopy(model.state_dict())
     best_loss = math.inf
+    best_score = -math.inf
     wait = 0
     history: list[dict[str, Any]] = []
 
@@ -82,12 +99,16 @@ def train_survpgc(
             device=device,
         )
         for idx in batches:
+            batch_omics_mask = omics_train_mask[idx] if omics_train_mask is not None else None
+            batch_omics = apply_rna_mask(omics_train[idx], batch_omics_mask)
             optimizer.zero_grad()
-            risk = model.forward_all(
+            risk = _forward_all(
+                model,
                 pathology_train[idx],
-                omics_train[idx],
+                batch_omics,
                 clinical_train[idx],
                 mask_train[idx],
+                omics_mask=batch_omics_mask,
             )
             loss = cox_ph_loss(risk, event_train[idx], time_train[idx])
             loss.backward()
@@ -98,11 +119,24 @@ def train_survpgc(
 
         model.eval()
         with torch.no_grad():
-            train_risk_tensor = model.forward_all(pathology_train, omics_train, clinical_train, mask_train)
+            train_eval_omics = apply_rna_mask(omics_train, omics_train_mask)
+            train_risk_tensor = _forward_all(
+                model,
+                pathology_train,
+                train_eval_omics,
+                clinical_train,
+                mask_train,
+                omics_mask=omics_train_mask,
+            )
             train_risk = train_risk_tensor.detach().cpu().numpy()
             train_full_loss = float(cox_ph_loss(train_risk_tensor, event_train, time_train).detach().cpu())
             val_loss = math.nan
             val_ci = math.nan
+            val_complete_loss = math.nan
+            val_complete_ci = math.nan
+            val_missing_loss = math.nan
+            val_missing_ci = math.nan
+            val_avg_ci = math.nan
             if val_tensors is not None:
                 val_risk_tensor = model.forward_all(pathology_val, omics_val, clinical_val, mask_val)
                 val_loss = float(cox_ph_loss(val_risk_tensor, event_val, time_val).detach().cpu())
@@ -111,6 +145,26 @@ def train_survpgc(
                     time_val.detach().cpu().numpy(),
                     event_val.detach().cpu().numpy(),
                 )
+                val_complete_loss = val_loss
+                val_complete_ci = val_ci
+                if robust_missing_rna:
+                    missing_val_mask = missing_rna_mask_like(omics_val)
+                    missing_val_omics = apply_rna_mask(omics_val, missing_val_mask)
+                    missing_val_risk = _forward_all(
+                        model,
+                        pathology_val,
+                        missing_val_omics,
+                        clinical_val,
+                        mask_val,
+                        omics_mask=missing_val_mask,
+                    )
+                    val_missing_loss = float(cox_ph_loss(missing_val_risk, event_val, time_val).detach().cpu())
+                    val_missing_ci = concordance_index(
+                        missing_val_risk.detach().cpu().numpy(),
+                        time_val.detach().cpu().numpy(),
+                        event_val.detach().cpu().numpy(),
+                    )
+                    val_avg_ci = float((val_complete_ci + val_missing_ci) / 2.0)
 
         mean_loss = float(np.mean(losses)) if losses else math.nan
         train_ci = concordance_index(
@@ -119,6 +173,7 @@ def train_survpgc(
             event_train.detach().cpu().numpy(),
         )
         monitor_loss = val_loss if val_tensors is not None else mean_loss
+        monitor_score = val_avg_ci if robust_missing_rna and not math.isnan(val_avg_ci) else math.nan
         history.append(
             {
                 "epoch": epoch,
@@ -127,12 +182,21 @@ def train_survpgc(
                 "train_ci": train_ci,
                 "val_loss": val_loss,
                 "val_ci": val_ci,
+                "val_complete_loss": val_complete_loss,
+                "val_complete_ci": val_complete_ci,
+                "val_missing_rna_loss": val_missing_loss,
+                "val_missing_rna_ci": val_missing_ci,
+                "val_avg_ci": val_avg_ci,
                 "monitor_loss": monitor_loss,
+                "monitor_score": monitor_score,
             }
         )
 
-        if monitor_loss < best_loss:
+        improved = monitor_score > best_score if robust_missing_rna else monitor_loss < best_loss
+        if improved:
             best_loss = monitor_loss
+            if robust_missing_rna:
+                best_score = monitor_score
             best_state = deepcopy(model.state_dict())
             wait = 0
         else:
@@ -148,12 +212,14 @@ def evaluate_survpgc(
     model: nn.Module,
     tensors: SurvPGCTensors,
     sample_ids: list[str],
+    omics_mask: torch.Tensor | None = None,
 ) -> tuple[float, pd.DataFrame]:
     """Evaluate a SurvPGC-style token Cox model."""
     pathology, omics, clinical, mask, time, event = tensors
     model.eval()
     with torch.no_grad():
-        risk = model.forward_all(pathology, omics, clinical, mask).detach().cpu().numpy()
+        eval_omics = apply_rna_mask(omics, omics_mask)
+        risk = _forward_all(model, pathology, eval_omics, clinical, mask, omics_mask=omics_mask).detach().cpu().numpy()
     time_np = time.detach().cpu().numpy().astype(float)
     event_np = event.detach().cpu().numpy().astype(int)
     c_index = concordance_index(risk, time_np, event_np)

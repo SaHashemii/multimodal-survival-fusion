@@ -5,7 +5,7 @@ experiment:
   output_dir: outputs/pathology_unimodal_cox
 
 data:
-  label_name: full
+  label_name: without_urolife
   pathology_feature_name: uni
 
 cv:
@@ -21,7 +21,8 @@ model:
     dropout: 0.20
     tile_cap: 4096
   head:
-    hidden_dims: [256, 64]
+    # previous_hidden_dims: [256, 64]
+    hidden_dims: [256]
     dropout: 0.30
     activation: selu
 

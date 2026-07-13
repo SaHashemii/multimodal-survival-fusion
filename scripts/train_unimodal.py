@@ -25,11 +25,16 @@ from mm_survival.data.clinical import (
     transform_clinical_table,
 )
 from mm_survival.data.labels import load_labels
-from mm_survival.data.pathology import load_pathology_features, load_pathology_index
+from mm_survival.data.pathology import (
+    load_pathology_features,
+    load_pathology_index,
+    load_prism_slide_features,
+    load_prism_slide_index,
+)
 from mm_survival.data.rna import fit_rna_medians, load_rna_matrix, transform_rna_with_medians
 from mm_survival.data.splits import prepare_fold_split, summarize_fold_split
 from mm_survival.models.encoders.rna import build_rna_extractor
-from mm_survival.models.unimodal import ClinicalCoxModel, PathologyCoxModel, RNACoxModel
+from mm_survival.models.unimodal import ClinicalCoxModel, PathologyCoxModel, PathologySlideCoxModel, RNACoxModel
 from mm_survival.training.artifacts import ensure_dir, save_checkpoint, write_history, write_json
 from mm_survival.training.cross_validation import make_fold_assignments
 from mm_survival.training.plots import write_kaplan_meier_plot
@@ -226,6 +231,46 @@ def train_pathology_fold(exp_cfg, labels, pathology_features, split, device, tra
     return model, history, (path_train, time_train, event_train), (path_test, time_test, event_test), {"pathology_in_dim": int(path_train[0].shape[1])}
 
 
+def train_pathology_slide_fold(exp_cfg, labels, pathology_features, split, device, train_cfg):
+    model_cfg = exp_cfg.get("model", {})
+    pathology_cfg = model_cfg.get("pathology", {})
+    head_cfg = model_cfg.get("head", {})
+
+    x_fit = torch.stack([pathology_features[sid] for sid in split.fit_ids]).to(device)
+    x_train = torch.stack([pathology_features[sid] for sid in split.train_ids]).to(device)
+    x_test = torch.stack([pathology_features[sid] for sid in split.test_ids]).to(device)
+    pathology_in_dim = int(x_train.shape[1])
+    expected_in_dim = pathology_cfg.get("in_dim")
+    if expected_in_dim is not None and int(expected_in_dim) != pathology_in_dim:
+        raise ValueError(f"Configured PRISM in_dim={expected_in_dim}, but loaded features have dim={pathology_in_dim}.")
+
+    model = PathologySlideCoxModel(
+        pathology_in_dim=pathology_in_dim,
+        pathology_hidden_dims=pathology_cfg.get("hidden_dims", [512]),
+        pathology_emb_dim=int(pathology_cfg.get("emb_dim", 256)),
+        pathology_dropout=float(pathology_cfg.get("dropout", 0.30)),
+        pathology_activation=pathology_cfg.get("activation", "selu"),
+        head_hidden_dims=head_cfg.get("hidden_dims", [256, 64]),
+        head_dropout=float(head_cfg.get("dropout", 0.30)),
+        head_activation=head_cfg.get("activation", "selu"),
+    ).to(device)
+
+    fit_tensors = (x_fit, *_label_tensors(labels, split.fit_ids, device))
+    val_tensors = (
+        torch.stack([pathology_features[sid] for sid in split.val_ids]).to(device),
+        *_label_tensors(labels, split.val_ids, device),
+    )
+    train_tensors = (x_train, *_label_tensors(labels, split.train_ids, device))
+    test_tensors = (x_test, *_label_tensors(labels, split.test_ids, device))
+    model, history = train_tensor_unimodal(model, fit_tensors, val_tensors=val_tensors, **_train_kwargs(train_cfg, device))
+    extra = {
+        "pathology_representation": "slide_embedding",
+        "pathology_in_dim": pathology_in_dim,
+        "pathology_emb_dim": int(pathology_cfg.get("emb_dim", 256)),
+    }
+    return model, history, train_tensors, test_tensors, extra
+
+
 def main() -> None:
     args = parse_args()
     exp_cfg = load_yaml(args.experiment)
@@ -237,6 +282,7 @@ def main() -> None:
     cv_cfg = exp_cfg.get("cv", {})
     train_cfg = exp_cfg.get("training", {})
     model_type = exp_info.get("model_type")
+    pathology_representation = None
     output_dir = ensure_dir(args.output_dir or resolve_path(REPO_ROOT, exp_info.get("output_dir", "outputs/unimodal")))
     device = torch.device(train_cfg.get("device", "cpu"))
     seed = int(cv_cfg.get("seed", 42))
@@ -259,20 +305,53 @@ def main() -> None:
             sample_ids = sorted(set(labels.index.astype(str)) & set(source["sample_id"].astype(str)))
         labels = labels.loc[sample_ids]
     elif model_type == "pathology_unimodal":
-        pathology_index_path = resolve_path(data_root, data_cfg["pathology_index"])
-        pathology_index = load_pathology_index(pathology_index_path)
-        sample_ids = sorted(set(labels.index.astype(str)) & set(pathology_index.index.astype(str)))
-        pathology_root = resolve_path(data_root, data_cfg.get("pathology_features_root")) or pathology_index_path.parent
-        source, invalid = load_pathology_features(
-            pathology_index,
-            sample_ids,
-            pathology_features_root=pathology_root,
-            seed=seed,
-            tile_cap=exp_cfg.get("model", {}).get("pathology", {}).get("tile_cap"),
+        pathology_representation = exp_cfg.get("model", {}).get("pathology", {}).get(
+            "representation",
+            data_cfg.get("pathology_representation", "tile_bag"),
         )
+        pathology_root = resolve_path(data_root, data_cfg.get("pathology_features_root"))
+        pathology_index_path = resolve_path(data_root, data_cfg.get("pathology_index"))
+        if pathology_representation == "slide_embedding":
+            if pathology_root is None:
+                raise ValueError("PRISM slide_embedding pathology requires pathology.features_root in the data config.")
+            if pathology_index_path is None:
+                pathology_index = load_prism_slide_index(
+                    pathology_root,
+                    file_suffix=data_cfg.get("pathology_file_suffix", "_HE.h5"),
+                )
+            else:
+                pathology_index = load_pathology_index(pathology_index_path)
+            sample_ids = sorted(set(labels.index.astype(str)) & set(pathology_index.index.astype(str)))
+            source, invalid = load_prism_slide_features(
+                pathology_index,
+                sample_ids,
+                feature_key=data_cfg.get("pathology_feature_key", "features"),
+            )
+        elif pathology_representation == "tile_bag":
+            if pathology_index_path is None:
+                raise ValueError("tile_bag pathology requires pathology.index_csv in the data config.")
+            pathology_index = load_pathology_index(pathology_index_path)
+            sample_ids = sorted(set(labels.index.astype(str)) & set(pathology_index.index.astype(str)))
+            pathology_root = pathology_root or pathology_index_path.parent
+            source, invalid = load_pathology_features(
+                pathology_index,
+                sample_ids,
+                pathology_features_root=pathology_root,
+                seed=seed,
+                tile_cap=exp_cfg.get("model", {}).get("pathology", {}).get("tile_cap"),
+            )
+        else:
+            raise ValueError(f"Unsupported pathology representation: {pathology_representation}")
         sample_ids = sorted(set(sample_ids) & set(source))
         labels = labels.loc[sample_ids]
-        write_json({"invalid_pathology_features": invalid, "retained_samples": len(sample_ids)}, output_dir / "missing_summary.json")
+        write_json(
+            {
+                "pathology_representation": pathology_representation,
+                "invalid_pathology_features": invalid,
+                "retained_samples": len(sample_ids),
+            },
+            output_dir / "missing_summary.json",
+        )
     else:
         raise ValueError(f"Unsupported unimodal model_type: {model_type}")
 
@@ -293,9 +372,14 @@ def main() -> None:
             train_ci, train_risk = evaluate_tensor_unimodal(model, train_data, split.train_ids)
             test_ci, test_risk = evaluate_tensor_unimodal(model, test_data, split.test_ids)
         else:
-            model, history, train_data, test_data, extra = train_pathology_fold(exp_cfg, labels, source, split, device, train_cfg)
-            train_ci, train_risk = evaluate_pathology_unimodal(model, train_data[0], train_data[1], train_data[2], split.train_ids, device)
-            test_ci, test_risk = evaluate_pathology_unimodal(model, test_data[0], test_data[1], test_data[2], split.test_ids, device)
+            if pathology_representation == "slide_embedding":
+                model, history, train_data, test_data, extra = train_pathology_slide_fold(exp_cfg, labels, source, split, device, train_cfg)
+                train_ci, train_risk = evaluate_tensor_unimodal(model, train_data, split.train_ids)
+                test_ci, test_risk = evaluate_tensor_unimodal(model, test_data, split.test_ids)
+            else:
+                model, history, train_data, test_data, extra = train_pathology_fold(exp_cfg, labels, source, split, device, train_cfg)
+                train_ci, train_risk = evaluate_pathology_unimodal(model, train_data[0], train_data[1], train_data[2], split.train_ids, device)
+                test_ci, test_risk = evaluate_pathology_unimodal(model, test_data[0], test_data[1], test_data[2], split.test_ids, device)
 
         fold_dir = ensure_dir(output_dir / f"fold_{fold}")
         write_history(history, fold_dir / "history.csv")

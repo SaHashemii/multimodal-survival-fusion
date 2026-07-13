@@ -5,19 +5,22 @@ data:
   root: /data/pathology/projects/saha/data
 
   # Label files. Use label_name in experiment configs to select one.
-  label_name: full
+  label_name: without_urolife
   labels:
     full: labels.csv
     without_urolife: labels_withoutUrolife.csv
+    urolife: labels_3U.csv
 
   rna: rna.csv
   clinical_tabular: clinical.csv
 
   # Clinical embedding/token sets. Use clinical_embedding_name in experiment configs.
-  clinical_embedding_name: bert6
+  clinical_embedding_name: conch5
   clinical_embeddings:
+    bert5: clinical_embeddings/bert/bert5
     bert6: clinical_embeddings/bert/bert6
     bert13: clinical_embeddings/bert/bert13
+    conch5: clinical_embeddings/conch/conch5
     conch6: clinical_embeddings/conch/conch6
     conch13: clinical_embeddings/conch/conch13
 
@@ -27,9 +30,13 @@ data:
     uni:
       index_csv: pathology_index.csv
       features_root: null
+      representation: tile_bag
     prism:
-      index_csv: null        # TODO: add PRISM pathology index CSV path.
-      features_root: null    # TODO: add PRISM pathology features root.
+      index_csv: null
+      features_root: PRISM
+      representation: slide_embedding
+      file_suffix: _HE.h5
+      feature_key: features
 
   # Omics embedding sets. Use omics_embedding_name in experiment configs.
   omics_embedding_name: scfoundation

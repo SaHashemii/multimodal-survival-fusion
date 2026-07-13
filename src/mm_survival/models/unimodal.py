@@ -153,3 +153,43 @@ class PathologyCoxModel(nn.Module):
 
     def forward(self, pathology_bags: list[torch.Tensor]) -> torch.Tensor:
         return self.forward_all(pathology_bags)
+
+
+class PathologySlideCoxModel(nn.Module):
+    """Pathology-only Cox model for slide-level embeddings such as PRISM."""
+
+    def __init__(
+        self,
+        pathology_in_dim: int,
+        pathology_hidden_dims: list[int] | None = None,
+        pathology_emb_dim: int = 256,
+        pathology_dropout: float = 0.30,
+        pathology_activation: str = "selu",
+        head_hidden_dims: list[int] | None = None,
+        head_dropout: float = 0.30,
+        head_activation: str = "selu",
+    ):
+        super().__init__()
+        pathology_hidden_dims = pathology_hidden_dims or [512]
+        drop_cls = nn.AlphaDropout if pathology_activation == "selu" else nn.Dropout
+        act_cls = nn.SELU if pathology_activation == "selu" else nn.ReLU
+
+        layers: list[nn.Module] = [nn.LayerNorm(pathology_in_dim), drop_cls(pathology_dropout)]
+        prev = pathology_in_dim
+        for hidden_dim in pathology_hidden_dims:
+            layers.extend([nn.Linear(prev, hidden_dim), nn.LayerNorm(hidden_dim), act_cls(), drop_cls(pathology_dropout)])
+            prev = hidden_dim
+        layers.extend([nn.Linear(prev, pathology_emb_dim), nn.LayerNorm(pathology_emb_dim), act_cls(), drop_cls(pathology_dropout)])
+        self.encoder = nn.Sequential(*layers)
+        self.head = CoxHead(
+            in_dim=pathology_emb_dim,
+            hidden_dims=head_hidden_dims or [256, 64],
+            dropout=head_dropout,
+            activation=head_activation,
+        )
+
+    def forward_all(self, pathology: torch.Tensor) -> torch.Tensor:
+        return self.head(self.encoder(pathology))
+
+    def forward(self, pathology: torch.Tensor) -> torch.Tensor:
+        return self.forward_all(pathology)

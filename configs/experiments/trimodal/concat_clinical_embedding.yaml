@@ -1,12 +1,13 @@
 experiment:
-  name: concat_multimodal
+  name: concat_clinical_embedding
   task: multimodal_survival
   model_type: embedding_multimodal
-  output_dir: outputs/concat_multimodal
+  output_dir: outputs/concat_clinical_embedding
 
 data:
-  label_name: full
-  clinical_source: tabular
+  label_name: without_urolife
+  clinical_source: embedding
+  clinical_embedding_name: bert5
   pathology_feature_name: uni
 
 cv:
