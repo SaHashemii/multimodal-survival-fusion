@@ -156,8 +156,37 @@ multimodal-survival-fusion/
 ```
 
 ## Installation
-## Dataset Format
+Clone the repository and install the package:
+
+```
+git clone https://github.com/SaHashemii/multimodal-survival-fusion.git
+cd multimodal-survival-fusion
+pip install -e .
+````
+
+> The training pipelines use precomputed modality features. Generating foundation-model embeddings may require additional dependencies.
+
+## Dataset Preparation
+
+This repository does not include the CHIMERA dataset or precomputed modality features.
+
+The training pipeline expects the following inputs:
+
+- Histopathology whole-slide image (WSI) features (e.g., UNI embeddings)
+- Bulk RNA-seq data or precomputed RNA representations
+- Clinical variables or precomputed clinical embeddings
+- Survival labels and patient metadata
+
+Configure dataset paths in a YAML file under `configs/data/` before running experiments.
 ## Configuration
+
+Experiments are configured using two YAML files:
+
+- `configs/data/` defines dataset paths and modality resources.
+- `configs/experiments/` defines the model architecture, fusion strategy, and training hyperparameters.
+
+Running an experiment requires specifying one data configuration and one experiment configuration.
+For a complete list of experiment configurations, see `configs/experiments/`.
 
 Data locations, model architectures, fusion strategies, and training settings are controlled through YAML configuration files.
 
