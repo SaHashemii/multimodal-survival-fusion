@@ -62,7 +62,7 @@ RNA-seq data were reduced in dimensionality by filtering genes using Hallmark an
 
 #### Clinical Text Embeddings ([BioClinical ModernBERT](https://github.com/lindvalllab/BioClinical-ModernBERT/tree/main) and [CONCH](https://github.com/mahmoodlab/CONCH))
 
-Clinical variables were converted into natural language sentences before encoding. Each variable (e.g., age, sex, smoking status, tumor stage) was expressed as a descriptive sentence and encoded using BioClinical ModernBERT or the CONCH text encoder to generate contextual embeddings.
+Clinical variables were converted into natural language sentences before encoding. Each variable (e.g., age, sex, smoking status, number of BCG instillations,...) was expressed as a descriptive sentence and encoded using BioClinical ModernBERT or the CONCH text encoder to generate contextual embeddings.
 
 **Example:**
 
@@ -71,7 +71,7 @@ Structured input:
 ```
 Age: 67
 Sex: Male
-Smoking history: yes/no
+Smoking status: yes/no
 ```
 
 Converted text:
@@ -236,4 +236,22 @@ python3 scripts/train_survpgc.py \
 > **Note:** Replace `/path/to/fold_assignments.csv` with a CSV containing `sample_id` and `fold` columns. Replace `/path/to/output_dir` with the directory where you want to save the training outputs. If `--fold-assignments` is omitted, the training scripts will create or reuse fold assignments in the output directory.
 
 For additional experiment configurations, see [`configs/`](configs/).
-## Citations
+
+## Results
+
+| Configuration | Best C-index |
+|---------------|-------------:|
+| Unimodal | 0.704 ± 0.051 |
+| Bimodal | 0.698 ± 0.030 |
+| Trimodal | **0.725 ± 0.083** |
+| Best missing-RNA | **0.720 ± 0.036** |
+
+## Acknowledgements
+
+This repository builds upon several publicly available resources:
+
+- [UNI](https://github.com/mahmoodlab/UNI)
+- [CONCH](https://github.com/mahmoodlab/CONCH)
+- [BioClinical ModernBERT](https://github.com/lindvalllab/BioClinical-ModernBERT)
+- [scFoundation](https://github.com/biomap-research/scFoundation)
+- [SurvPGC](https://github.com/Houjiaxin123/SurvPGC)
