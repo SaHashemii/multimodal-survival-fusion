@@ -2,15 +2,32 @@
 
 ## Overview
 
+A configurable PyTorch framework for multimodal survival prediction using histopathology, RNA-seq, and clinical data, with a systematic comparison of fusion strategies and robustness to missing RNA-seq.
+
 <p align="center">
   <img src="Overview.png" alt="Overview of the multimodal survival prediction framework">
 </p>
 
-This repository provides a configurable benchmark for time-to-event prediction of BCG progression in high-risk non-muscle-invasive bladder cancer (HR-NMIBC). It compares unimodal, bimodal, and trimodal survival models using histopathology whole-slide images, bulk RNA-seq, and clinical data.
+This repository provides a configurable benchmark for multimodal survival prediction of BCG progression in high-risk non-muscle-invasive bladder cancer (HR-NMIBC). It compares unimodal, bimodal, and trimodal models using histopathology whole-slide images, bulk RNA-seq, and clinical data.
 
-The framework evaluates multiple fusion strategies, including concatenation, scalar-gated fusion, low-rank bilinear fusion, late fusion, and SurvPGC-style co-attention. It also supports different modality representations, including UNI pathology features, tabular and text-embedding clinical inputs, variance-filtered RNA, pathway/category RNA tokens, and scFoundation embeddings.
+The framework implements both embedding-based and token-based multimodal fusion strategies, including concatenation, scalar-gated fusion, low-rank bilinear fusion, and SurvPGC-style co-attention. It also supports multiple modality representations, including UNI pathology features, tabular and text-embedded clinical data, variance-filtered RNA, pathway and biological-category RNA tokens, and scFoundation embeddings.
 
-A key focus of the project is robustness to missing RNA-seq, which is common in clinical practice. The code includes RNA-dropout training and evaluates models with both complete modalities and missing-RNA inference to compare how reliably each fusion strategy performs under realistic missing-modality conditions.
+To reflect clinical practice where RNA-seq is often unavailable, the framework includes RNA-dropout training and evaluates robustness under missing-RNA inference.
+
+## Key Features
+
+- Benchmark of unimodal, bimodal, and trimodal survival prediction models
+- Comparison of embedding-based and token-based multimodal fusion strategies
+- Support for pathology, bulk RNA-seq, and clinical data
+- Multiple modality representations, including UNI, BioClinical ModernBERT, CONCH, and scFoundation
+- RNA-dropout training for robustness to missing RNA-seq
+- YAML-based experiment configuration for reproducible benchmarking
+- Five-fold cross-validation with configurable training pipelines
+
+## Supported Modalities
+- WSI
+- Bulk RNA-Seq
+- Clinical data
 
 ### Pathology (WSI)
 
@@ -37,7 +54,7 @@ A key focus of the project is robustness to missing RNA-seq, which is common in 
 | CONCH text encoder | Text embeddings | `[5, 512]`  |
 
 
-### Foundation Model Embeddings
+## Modality Representations
 
 #### RNA-seq Embeddings ([scFoundation](https://github.com/biomap-research/scFoundation))
 
@@ -54,7 +71,7 @@ Structured input:
 ```
 Age: 67
 Sex: Male
-Smoking: yes/no
+Smoking history: yes/no
 ```
 
 Converted text:
@@ -66,58 +83,28 @@ The patient has a history of smoking.
 ```
 
 See [`resources/templates/clinical_embedding_sentence_templates.csv`](resources/templates/clinical_embedding_sentence_templates.csv) for the full clinical text templates.
+
 ## Models
 
-This repository implements both unimodal and multimodal survival prediction models using pathology, RNA-seq, and clinical data.
+The repository implements Cox proportional hazards models for unimodal, bimodal, and trimodal survival prediction using histopathology (P), bulk RNA-seq (R), and clinical (C) data.
 
-### Unimodal Models
+| Configuration | Modalities | Supported fusion strategies |
+|--------------|------------|-----------------------------|
+| Unimodal | P, R, or C | Cox survival model |
+| Bimodal | P+R, P+C, R+C | Concatenation, Scalar-Gated, Low-Rank Bilinear |
+| Trimodal | P+R+C | Concatenation, Scalar-Gated, Low-Rank Bilinear, SurvPGC-style Co-Attention |
 
-| Modality | Representation |
-|-----------|-----------|
-| Pathology | UNI tile embeddings |
-| RNA-seq | Variance-filtered gene expression |
-| Clinical | BioClinical ModernBERT or CONCH text embeddings |
+Unimodal models evaluate the predictive value of each modality independently. Bimodal models assess complementary information between modality pairs, while trimodal models integrate all three modalities for multimodal survival prediction.
 
-#### RNA-only Cox Model
 
-Gene expression profiles are filtered using coefficient-of-variation feature selection and processed by an MLP encoder. The resulting patient representation is used for Cox survival prediction.
+## Fusion Strategies
 
-#### Clinical-only Cox Model
-
-Structured clinical variables are converted into natural language sentences and encoded using BioClinical ModernBERT or CONCH. The resulting embeddings are used for Cox survival prediction.
-
-#### Pathology-only Cox Model
-
-UNI tile embeddings extracted from whole-slide images are aggregated using gated attention multiple-instance learning (MIL) to generate slide-level representations for Cox survival prediction.
-
----
-
-### Multimodal Models
-
-The repository includes multiple fusion strategies for integrating pathology, RNA-seq, and clinical information.
-
-| Fusion Strategy | Input | Modalities |
-|----------------|--------|------------|
-| Concatenation Fusion | Embeddings | P+R+C |
-| Gated Fusion | Embeddings | P+R+C |
-| Low-Rank Bilinear Fusion | Embeddings | P+R+C |
-| SurvPGC-style Co-Attention Fusion | Tokens | P+R+C |
-
-#### Concatenation Fusion
-
-Pathology, RNA-seq, and clinical embeddings are concatenated into a single feature vector and used for survival prediction.
-
-#### Gated Fusion
-
-Pathology, RNA-seq, and clinical embeddings are weighted by learnable gates before fusion, allowing the model to adaptively determine the contribution of each modality.
-
-#### Low-Rank Bilinear Fusion
-
-Interactions between pathology, RNA-seq, and clinical representations are modeled using low-rank bilinear projections, capturing pairwise cross-modal relationships before survival prediction.
-
-#### SurvPGC-style Co-Attention Fusion
-
-Pathology, RNA-seq, and clinical tokens are projected into a shared feature space and fused through bidirectional co-attention. Separate co-attention modules model interactions between pathology-RNA and pathology-clinical representations, enabling cross-modal information exchange before survival prediction.
+| Fusion Strategy | Input | Description |
+|-----------------|-------|-------------|
+| Concatenation | Embeddings | Concatenates modality embeddings before Cox prediction. |
+| Scalar-Gated | Embeddings | Learns patient-specific weights for each modality prior to fusion. |
+| Low-Rank Bilinear | Embeddings | Models compact pairwise interactions between modalities. |
+| SurvPGC-style Co-Attention | Tokens | Performs token-level cross-modal attention before survival prediction. |
 
 <p align="center">
   <img src="fusion_comparison.png" alt="Fusion Comparison" width="1000">
@@ -126,8 +113,6 @@ Pathology, RNA-seq, and clinical tokens are projected into a shared feature spac
 <p align="center">
   <em>Comparison of the four implemented multimodal fusion strategies.</em>
 </p>
-
-For implementation details, see the fusion modules in `src/mm_survival/models/fusion/`.
 
 ## Repository Structure
 
