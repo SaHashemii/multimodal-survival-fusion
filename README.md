@@ -177,88 +177,63 @@ The training pipeline expects the following inputs:
 - Clinical variables or precomputed clinical embeddings
 - Survival labels and patient metadata
 
-Configure dataset paths in a YAML file under `configs/data/` before running experiments.
+Configure dataset paths in a YAML file under [`configs/data/`](configs/data/) before running experiments.
 ## Configuration
 
 Experiments are configured using two YAML files:
 
-- `configs/data/` defines dataset paths and modality resources.
-- `configs/experiments/` defines the model architecture, fusion strategy, and training hyperparameters.
+- [`configs/data/`](configs/data/) defines dataset paths and modality resources.
+- [`configs/experiments/`](configs/experiments/) defines the model architecture, fusion strategy, and training hyperparameters.
 
 Running an experiment requires specifying one data configuration and one experiment configuration.
-For a complete list of experiment configurations, see `configs/experiments/`.
-
-Data locations, model architectures, fusion strategies, and training settings are controlled through YAML configuration files.
-
-### How Configs Work
-
-The repository separates dataset configuration from experiment configuration:
-
-* `configs/data/` contains dataset-specific settings, including data locations, labels, embeddings, pathology features, and external resources.
-* `configs/experiments/` contains experiment-specific settings, including model architecture, modality selection, fusion strategy, hyperparameters, and cross-validation settings.
-
-This separation allows the same experiment configuration to be reused across different datasets and environments.
-
-### Data Selectors
-
-Several fields in the experiment configurations select among options defined in the data configuration:
-
-* `label_name` selects the label file used for training and evaluation.
-* `clinical_embedding_name` selects the clinical text embedding source (e.g., BioClinical ModernBERT or CONCH).
-* `pathology_feature_name` selects the pathology feature set (e.g., UNI or PRISM).
-* `omics_source` selects the omics representation used by SurvPGC-style models:
-
-  * `pathway` – pathway-based RNA tokens
-  * `category` – biological-category RNA tokens
-  * `scfoundation` – precomputed scFoundation embeddings
-
-### Experiment Configurations
-
-| Config file                                | Model / fusion                           | Clinical input             | Omics / RNA input                           | Pathology input     |
-| ------------------------------------------ | ---------------------------------------- | -------------------------- | ------------------------------------------- | ------------------- |
-| `rna_unimodal.yaml`                        | RNA-only Cox                             | -                  | RNA expression with variance-filtered genes | -           |
-| `clinical_unimodal.yaml`                   | Clinical-only Cox                        | Clinical text embeddings   | -                                    | -          |
-| `pathology_unimodal.yaml`                  | Pathology-only Cox                       | -                   | -                                    | UNI tile embeddings |
-| `concat.yaml`                              | Concatenation fusion                     | Tabular clinical variables | RNA expression with variance-filtered genes | UNI tile embeddings |
-| `concat_clinical_embedding.yaml`           | Concatenation fusion                     | Clinical text embeddings   | RNA expression with variance-filtered genes | UNI tile embeddings |
-| `gated_concat.yaml`                        | Gated concatenation fusion               | Tabular clinical variables | RNA expression with variance-filtered genes | UNI tile embeddings |
-| `gated_concat_clinical_embedding.yaml`     | Gated concatenation fusion               | Clinical text embeddings   | RNA expression with variance-filtered genes | UNI tile embeddings |
-| `lowrank_bilinear.yaml`                    | Low-rank bilinear fusion                 | Tabular clinical variables | RNA expression with variance-filtered genes | UNI tile embeddings |
-| `lowrank_bilinear_clinical_embedding.yaml` | Low-rank bilinear fusion                 | Clinical text embeddings   | RNA expression with variance-filtered genes | UNI tile embeddings |
-| `survpgc.yaml`                             | SurvPGC-style bidirectional co-attention | Clinical text embeddings   | Pathway-based RNA tokens                    | UNI tile embeddings |
-| `survpgc_category.yaml`                    | SurvPGC-style bidirectional co-attention | Clinical text embeddings   | Biological-category RNA tokens              | UNI tile embeddings |
-| `survpgc_scfoundation.yaml`                | SurvPGC-style bidirectional co-attention | Clinical text embeddings   | scFoundation RNA-seq embeddings             | UNI tile embeddings |
+For a complete list of experiment configurations, see [`configs/`](configs/).
 
 
 ## Running Experiments
 
-All experiments are run from the repository root using a data configuration file and an experiment configuration file.
+All experiments are run from the repository root by specifying a dataset configuration and an experiment configuration.
 
-### Unimodal Models
+### Unimodal
 
 ```bash
 python3 scripts/train_unimodal.py \
-  --experiment configs/experiments/rna_unimodal.yaml \
-  --data configs/data/local.yaml
+  --experiment configs/experiments/unimodal/rna_unimodal.yaml \
+  --data configs/data/local.yaml \
+  --fold-assignments /path/to/fold_assignments.csv \
+  --output-dir /path/to/output_dir
 ```
 
-### Multimodal Fusion Models
+### Bimodal
+
+```bash
+python3 scripts/train_two_modality.py \
+  --experiment configs/experiments/bimodal/concat_rna_clinical.yaml \
+  --data configs/data/local.yaml \
+  --fold-assignments /path/to/fold_assignments.csv \
+  --output-dir /path/to/output_dir
+```
+
+### Trimodal
 
 ```bash
 python3 scripts/train_cv.py \
-  --experiment configs/experiments/concat.yaml \
-  --data configs/data/local.yaml
+  --experiment configs/experiments/trimodal/concat.yaml \
+  --data configs/data/local.yaml \
+  --fold-assignments /path/to/fold_assignments.csv \
+  --output-dir /path/to/output_dir
 ```
 
-### SurvPGC-style Co-Attention Models
+### SurvPGC-style Co-Attention
 
 ```bash
 python3 scripts/train_survpgc.py \
-  --experiment configs/experiments/survpgc.yaml \
-  --data configs/data/local.yaml
+  --experiment configs/experiments/survpgc/survpgc_category.yaml \
+  --data configs/data/local.yaml \
+  --fold-assignments /path/to/fold_assignments.csv \
+  --output-dir /path/to/output_dir
 ```
 
-To run a different experiment, replace the experiment configuration file with any configuration listed in the Configuration section.
+> **Note:** Replace `/path/to/fold_assignments.csv` with a CSV containing `sample_id` and `fold` columns. Replace `/path/to/output_dir` with the directory where you want to save the training outputs. If `--fold-assignments` is omitted, the training scripts will create or reuse fold assignments in the output directory.
 
-## Results
+For additional experiment configurations, see [`configs/`](configs/).
 ## Citations
