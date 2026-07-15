@@ -2,6 +2,10 @@
 
 ## Overview
 
+<p align="center">
+  <img src="Overview.png" alt="Overview of the multimodal survival prediction framework">
+</p>
+
 This repository provides a configurable benchmark for time-to-event prediction of BCG progression in high-risk non-muscle-invasive bladder cancer (HR-NMIBC). It compares unimodal, bimodal, and trimodal survival models using histopathology whole-slide images, bulk RNA-seq, and clinical data.
 
 The framework evaluates multiple fusion strategies, including concatenation, scalar-gated fusion, low-rank bilinear fusion, late fusion, and SurvPGC-style co-attention. It also supports different modality representations, including UNI pathology features, tabular and text-embedding clinical inputs, variance-filtered RNA, pathway/category RNA tokens, and scFoundation embeddings.
