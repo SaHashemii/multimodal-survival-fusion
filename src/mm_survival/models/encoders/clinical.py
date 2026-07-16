@@ -1,4 +1,25 @@
-"""Clinical encoders for tabular covariates and token embeddings."""
+"""
+Clinical encoders for tabular covariates and token embeddings
+=============================================================
+
+Transforms clinical inputs into one fixed-length patient-level embedding.
+
+Supported clinical inputs
+-------------------------
+  tabular covariates:
+    preprocessed feature vector → MLP → clinical embedding
+
+  frozen text/token embeddings:
+    [tokens, dim] embeddings → token projection → flatten/pool → clinical embedding
+
+Design rationale
+----------------
+* Tabular clinical data are already patient-level features.
+* BERT/CONCH clinical embeddings are token-level features, so each token is
+  projected to a lower dimension before all token features are combined.
+* Zero-padded clinical tokens are masked so padding does not contribute to the
+  patient representation.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +45,9 @@ class ClinicalEncoder(nn.Module):
         layers: list[nn.Module] = []
         prev = in_dim
         for hidden_dim in hidden_dims:
+
+            # Tabular features are encoded by a standard MLP before being passed
+            # to fusion or the unimodal Cox head.
             layers.extend([nn.Linear(prev, hidden_dim), nn.LayerNorm(hidden_dim), act_cls(), drop_cls(dropout)])
             prev = hidden_dim
         layers.extend([nn.Linear(prev, emb_dim), act_cls(), drop_cls(dropout)])
@@ -69,8 +93,14 @@ class ClinicalEmbeddingEncoder(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim != 3:
             raise ValueError(f"ClinicalEmbeddingEncoder expects [batch, tokens, dim], got {tuple(x.shape)}")
+
+        # Padding tokens are all-zero rows. Mask them after token projection so
+        # shorter clinical prompts do not add artificial signal when flattened.
         mask = (x.abs().sum(dim=-1, keepdim=True) > 0).float()
         token_emb = self.token_net(x) * mask
+
+        # Original clinical-embedding design: project each token to a lower
+        # dimension, flatten all projected tokens, then compress to emb_dim.
         return self.fused_net(token_emb.flatten(start_dim=1))
 
 
@@ -88,6 +118,9 @@ class ClinicalEmbeddingPoolingEncoder(nn.Module):
     ):
         super().__init__()
         if pooling == "auto":
+
+            # For a single token, mean pooling and flattening are equivalent in
+            # shape; for multiple tokens, mean is the simpler default.
             pooling = "mean" if token_count > 1 else "flatten"
         if pooling == "attention" and token_count == 1:
             pooling = "mean"
@@ -99,6 +132,9 @@ class ClinicalEmbeddingPoolingEncoder(nn.Module):
         self.feature_net = None
 
         if pooling == "attention":
+
+            # Attention pooling learns token weights before summing token
+            # embeddings into one patient-level clinical representation.
             self.attention = nn.Sequential(
                 nn.LayerNorm(in_dim),
                 nn.Linear(in_dim, attention_hidden_dim),
@@ -111,6 +147,9 @@ class ClinicalEmbeddingPoolingEncoder(nn.Module):
         elif pooling == "flatten":
             self.output_dim = token_count * in_dim
         elif pooling == "project-concat":
+
+            # Legacy project-concat path mirrors the older clinical unimodal
+            # model: project token embeddings down, then concatenate tokens.
             self.feature_net = nn.Sequential(
                 nn.Linear(in_dim, projection_dim // 2),
                 nn.ReLU(),
@@ -129,6 +168,8 @@ class ClinicalEmbeddingPoolingEncoder(nn.Module):
         mask = (x.abs().sum(dim=-1, keepdim=True) > 0).float()
         if self.pooling == "attention":
             logits = self.attention(x).squeeze(-1)
+
+            # Mask padded tokens before softmax so they receive zero attention.
             logits = logits.masked_fill(mask.squeeze(-1) == 0, torch.finfo(logits.dtype).min)
             weights = torch.softmax(logits, dim=1)
             return torch.sum(weights.unsqueeze(-1) * x, dim=1)

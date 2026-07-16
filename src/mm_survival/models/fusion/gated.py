@@ -1,4 +1,24 @@
-"""Scalar-gated concatenation fusion."""
+"""
+Scalar-gated concatenation fusion
+=================================
+
+Learns one patient-specific scalar weight for each modality, multiplies each
+modality embedding by its gate, and concatenates the gated embeddings.
+
+Pipeline
+--------
+  RNA embedding       → scalar gate → gated RNA
+  clinical embedding  → scalar gate → gated clinical
+  pathology embedding → scalar gate → gated pathology
+                                         ↓
+                               concatenate embeddings
+
+Missing RNA behavior
+--------------------
+When rna_mask is provided, patients with rna_mask = 0 have both their gated RNA
+embedding and reported RNA gate set to zero. Clinical and pathology branches are
+left unchanged.
+"""
 
 from __future__ import annotations
 
@@ -49,6 +69,9 @@ class ModalityGatedConcatFusion(nn.Module):
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         rna_gated, rna_gate = self.rna_gate(rna_emb)
         if rna_mask is not None:
+
+            # Missing RNA should contribute nothing to the concatenated feature
+            # vector and should also report a zero RNA gate for inspection.
             mask = rna_mask.reshape(-1, 1).to(device=rna_emb.device, dtype=rna_emb.dtype)
             rna_gated = rna_gated * mask
             rna_gate = rna_gate * mask.squeeze(-1)

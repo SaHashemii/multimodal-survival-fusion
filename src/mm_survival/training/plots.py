@@ -1,4 +1,22 @@
-"""Plotting utilities for survival model outputs."""
+"""
+Plotting utilities for survival model outputs
+=============================================
+
+Creates Kaplan-Meier curves from saved model risk scores.
+
+Pipeline
+--------
+  pooled test risk scores → median risk split → low/high risk KM curves
+  log-rank test → PNG plot + metadata dictionary
+
+Design rationale
+----------------
+* In cross-validation runs, the input risk table is usually the pooled
+  out-of-fold test predictions from all folds.
+* The median log-risk split is used as a simple model-derived high/low risk
+  grouping for visualization.
+* The plot is descriptive; C-index remains the primary ranking metric.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +35,9 @@ def kaplan_meier_curve(time: np.ndarray, event: np.ndarray) -> tuple[np.ndarray,
     survival = [1.0]
     current = 1.0
     for t in event_times:
+
+        # Kaplan-Meier update: survival is multiplied by the probability of not
+        # having an event at this event time among patients still at risk.
         at_risk = int((time >= t).sum())
         events_at_t = int(((time == t) & (event == 1)).sum())
         if at_risk <= 0:
@@ -32,6 +53,9 @@ def logrank_test(time: np.ndarray, event: np.ndarray, high_risk: np.ndarray) -> 
     event_times = np.sort(np.unique(time[event == 1]))
     observed_high = expected_high = variance_high = 0.0
     for t in event_times:
+
+        # Compare observed events in the high-risk group to the number expected
+        # under equal survival between high- and low-risk groups.
         at_risk = time >= t
         at_risk_high = at_risk & high_risk
         n = int(at_risk.sum())
@@ -76,6 +100,9 @@ def write_kaplan_meier_plot(
     time = risk_scores["Time"].to_numpy(float)
     event = risk_scores["Event"].to_numpy(int)
     median_risk = float(np.median(risk))
+
+    # Patients at or above the median predicted log-risk are assigned to the
+    # high-risk curve; the remaining patients define the low-risk curve.
     high_risk = risk >= median_risk
 
     stats = {

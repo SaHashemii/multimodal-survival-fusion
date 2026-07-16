@@ -1,4 +1,23 @@
-"""Fold tensor preparation for embedding-based multimodal models."""
+"""
+Fold tensor preparation for embedding-based multimodal models
+=============================================================
+
+Converts one FoldSplit into tensors used by concat, gated, low-rank, and
+two-modality embedding-based Cox models.
+
+Pipeline
+--------
+  split sample IDs → RNA median imputation → clinical tensor preparation
+  attach pathology feature bags → pack labels/times/events into tensors
+
+Design rationale
+----------------
+* RNA medians are fit on the fit split only, then reused for train/val/test.
+* Clinical preprocessing is also fit on the fit split only for tabular data.
+* Clinical embeddings are padded/truncated to one fixed [tokens, dim] shape.
+* Pathology features stay as a list of per-patient tensors because each slide
+  can contain a different number of tile embeddings.
+"""
 
 from __future__ import annotations
 
@@ -71,6 +90,9 @@ def prepare_embedding_fold_data(
     """Prepare tensors for concat/gated/low-rank multimodal models."""
     gene_names = dataset.rna.columns.astype(str).tolist()
     fit_rna = dataset.rna.loc[split.fit_ids, gene_names]
+
+    # Fit RNA imputation on the fit split only so validation/test missingness
+    # does not influence preprocessing statistics.
     medians = fit_rna_medians(fit_rna)
 
     x_rna_fit = transform_rna_with_medians(fit_rna, medians)
@@ -84,6 +106,9 @@ def prepare_embedding_fold_data(
         clinical_embeddings = dataset.clinical
         if not isinstance(clinical_embeddings, dict):
             raise TypeError("Expected clinical embeddings dictionary when clinical_source='embedding'.")
+
+        # Embedding-based clinical inputs are token tensors. The maximum token
+        # count and embedding dimension define a fixed tensor shape per fold.
         clinical_token_count = max(int(emb.shape[0]) for emb in clinical_embeddings.values())
         clinical_dim = int(next(iter(clinical_embeddings.values())).shape[1])
         x_clinical_train = stack_clinical_embeddings(
@@ -124,6 +149,9 @@ def prepare_embedding_fold_data(
         if isinstance(clinical_table, dict):
             raise TypeError("Expected clinical dataframe when clinical_source='tabular'.")
         clinical_index = clinical_table.set_index("sample_id")
+
+        # Tabular preprocessing is learned on fit IDs and then applied to every
+        # split with frozen numeric/categorical metadata.
         clinical_fit = clinical_index.loc[split.fit_ids].reset_index()
         clinical_train = clinical_index.loc[split.train_ids].reset_index()
         clinical_val = clinical_index.loc[split.val_ids].reset_index()

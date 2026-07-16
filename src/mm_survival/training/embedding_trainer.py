@@ -1,4 +1,27 @@
-"""Trainer for embedding-based multimodal Cox models."""
+"""
+Trainer for embedding-based multimodal Cox models
+=================================================
+
+Used by concat, gated, and low-rank fusion models after RNA, clinical, and
+pathology inputs have already been converted to embeddings.
+
+Training pipeline
+-----------------
+  1. Build event-aware or random mini-batches from the fit split.
+  2. Optionally apply deterministic RNA dropout to training patients.
+  3. Optimize the Cox partial likelihood.
+  4. Evaluate validation data with complete modalities.
+  5. If robust_missing_rna=True, also evaluate validation data with all RNA
+     removed and use the average validation C-index for model selection.
+
+Design rationale
+----------------
+* Training RNA dropout teaches the model to tolerate missing RNA.
+* Validation/test dropout is not random; the same patients are evaluated in
+  complete and missing-RNA settings for deterministic robustness estimates.
+* The trainer accepts an rna_mask but leaves fusion-specific interpretation to
+  the model, so concat, gated, and low-rank can handle missing RNA differently.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +52,10 @@ def _make_batches(
     min_events_per_batch: int,
     device: torch.device,
 ) -> list[torch.Tensor]:
+
+    # The original experiments used multiple training styles. Keeping this
+    # routing here lets configs reproduce full-batch, random-batch, and
+    # event-aware Cox optimization without changing model code.
     if training_style in {"full_batch", "baseline_stream"}:
         return [torch.arange(n_samples, device=device)]
     if training_style == "event_batch":
@@ -47,6 +74,9 @@ def _forward_all(
     device: torch.device,
     rna_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
+
+    # Older models do not require an RNA mask, while missing-RNA-aware fusion
+    # modules use it to zero modality contributions in a model-specific way.
     if rna_mask is None:
         return model.forward_all(rna, clinical, pathology_bags, device)
     return model.forward_all(rna, clinical, pathology_bags, device, rna_mask=rna_mask)
@@ -97,6 +127,10 @@ def train_embedding_multimodal(
         for idx in batches:
             batch_bags = _batch_pathology(pathology_train, idx)
             batch_rna_mask = rna_train_mask[idx] if rna_train_mask is not None else None
+
+            # RNA dropout is applied only to training batches. The same mask is
+            # also passed to the model so gated/low-rank modules can suppress
+            # RNA-specific outputs, not just zero the raw RNA input.
             batch_rna = apply_rna_mask(rna_train[idx], batch_rna_mask)
             optimizer.zero_grad()
             risk = _forward_all(model, batch_rna, clinical_train[idx], batch_bags, device, rna_mask=batch_rna_mask)
@@ -109,6 +143,10 @@ def train_embedding_multimodal(
 
         model.eval()
         with torch.no_grad():
+
+            # Training metrics are computed under the same observed/missing RNA
+            # mask used during optimization, so the reported train loss reflects
+            # the actual training condition.
             train_eval_rna = apply_rna_mask(rna_train, rna_train_mask)
             train_risk_tensor = _forward_all(model, train_eval_rna, clinical_train, pathology_train, device, rna_mask=rna_train_mask)
             train_risk = train_risk_tensor.detach().cpu().numpy()
@@ -121,6 +159,9 @@ def train_embedding_multimodal(
             val_missing_ci = math.nan
             val_avg_ci = math.nan
             if val_tensors is not None and pathology_val is not None:
+
+                # Complete-modality validation: RNA, clinical, and pathology are
+                # all available for the validation patients.
                 val_risk_tensor = model.forward_all(rna_val, clinical_val, pathology_val, device)
                 val_loss = float(cox_ph_loss(val_risk_tensor, event_val, time_val).detach().cpu())
                 val_ci = concordance_index(
@@ -131,6 +172,9 @@ def train_embedding_multimodal(
                 val_complete_loss = val_loss
                 val_complete_ci = val_ci
                 if robust_missing_rna:
+
+                    # Missing-RNA validation is deterministic: every validation
+                    # patient is evaluated again with RNA set to zero.
                     missing_val_mask = missing_rna_mask_like(rna_val)
                     missing_val_rna = apply_rna_mask(rna_val, missing_val_mask)
                     missing_val_risk = _forward_all(
@@ -175,6 +219,9 @@ def train_embedding_multimodal(
             }
         )
 
+        # Standard experiments select the lowest validation loss. Robust
+        # missing-RNA experiments select the best average of complete and
+        # missing-RNA validation C-index.
         improved = monitor_score > best_score if robust_missing_rna else monitor_loss < best_loss
         if improved:
             best_loss = monitor_loss
@@ -203,6 +250,9 @@ def evaluate_embedding_multimodal(
     rna, clinical, time, event = tensors
     model.eval()
     with torch.no_grad():
+
+        # Passing rna_mask=None gives complete-modality evaluation; passing an
+        # all-zero mask gives the missing-RNA test setting.
         eval_rna = apply_rna_mask(rna, rna_mask)
         risk = _forward_all(model, eval_rna, clinical, pathology_bags, device, rna_mask=rna_mask).detach().cpu().numpy()
     time_np = time.detach().cpu().numpy().astype(float)

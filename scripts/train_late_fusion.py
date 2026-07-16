@@ -1,5 +1,35 @@
 #!/usr/bin/env python3
-"""Fuse saved unimodal risk scores at the decision level."""
+"""
+Fuse saved unimodal risk scores at the decision level
+=====================================================
+
+Late fusion combines predictions from already trained unimodal models rather
+than combining modality embeddings inside one neural network.
+
+Inputs
+------
+  RNA unimodal output directory
+  pathology unimodal output directory
+  clinical unimodal output directory
+
+Each input directory must contain matching fold_* folders with saved train/test
+risk-score CSV files.
+
+Fusion methods
+--------------
+  mean:
+    average RNA, pathology, and clinical log-risk scores
+
+  learned_cox:
+    fit a small Cox model on unimodal train risk scores, then apply it to the
+    corresponding test fold
+
+Design rationale
+----------------
+* Late fusion uses the same outer folds as the unimodal models.
+* Sample alignment is done by sample_id, Event, and Time so risk scores from the
+  three modalities are combined only for the same patients.
+"""
 
 from __future__ import annotations
 
@@ -45,6 +75,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def read_risk_table(path: Path) -> pd.DataFrame:
+    """Read one saved unimodal risk-score table."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing risk-score file: {path}")
     table = pd.read_csv(path)
@@ -61,6 +92,7 @@ def rename_modality_risk(table: pd.DataFrame, modality: str) -> pd.DataFrame:
 
 
 def merge_modality_tables(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Merge RNA, pathology, and clinical risk tables on shared patients."""
     merged: pd.DataFrame | None = None
     for modality in MODALITIES:
         table = rename_modality_risk(tables[modality], modality)
@@ -68,6 +100,9 @@ def merge_modality_tables(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
         if merged is None:
             merged = table[keep_cols]
         else:
+
+            # Merge on labels as well as sample_id so a mismatch in event/time
+            # metadata is caught instead of silently combining inconsistent rows.
             merged = merged.merge(
                 table[keep_cols],
                 on=["sample_id", "Event", "Time"],
@@ -80,6 +115,7 @@ def merge_modality_tables(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def available_folds(input_dirs: dict[str, Path]) -> list[int]:
+    """Return fold numbers present in all unimodal output directories."""
     fold_sets = []
     for path in input_dirs.values():
         folds = set()
@@ -104,6 +140,7 @@ def load_fold_tables(input_dirs: dict[str, Path], fold: int, split: str) -> pd.D
 
 
 def cox_gradient(risk: np.ndarray, time: np.ndarray, event: np.ndarray) -> tuple[float, np.ndarray]:
+    """Compute Cox loss and gradient with respect to risk scores."""
     exp_risk = np.exp(risk - np.max(risk))
     event_idx = np.where(event == 1)[0]
     if len(event_idx) == 0:
@@ -112,6 +149,9 @@ def cox_gradient(risk: np.ndarray, time: np.ndarray, event: np.ndarray) -> tuple
     loss = 0.0
     grad = np.zeros_like(risk)
     for i in event_idx:
+
+        # Risk set for patient i includes patients still under observation at
+        # patient i's event time.
         at_risk = time >= time[i]
         denom = exp_risk[at_risk].sum()
         if denom <= 0:
@@ -132,6 +172,10 @@ def fit_learned_cox(
     lr: float = 0.05,
     weight_decay: float = 0.01,
 ) -> tuple[np.ndarray, dict[str, float]]:
+    """Fit a Cox model using unimodal risk scores as three input features."""
+
+    # Standardize train-fold unimodal risk scores before fitting the learned
+    # late-fusion weights.
     mean = train_features.mean(axis=0)
     std = train_features.std(axis=0)
     std[std == 0.0] = 1.0
@@ -149,6 +193,9 @@ def fit_learned_cox(
         risk = x @ weights
         loss, grad_risk = cox_gradient(risk, time, event)
         grad = x.T @ grad_risk + weight_decay * weights
+
+        # Small Adam optimizer implemented in NumPy to keep late fusion light and
+        # independent of the neural training loops.
         m = beta1 * m + (1.0 - beta1) * grad
         v = beta2 * v + (1.0 - beta2) * (grad * grad)
         m_hat = m / (1.0 - beta1**step)
@@ -191,6 +238,7 @@ def make_risk_output(merged: pd.DataFrame, risk: np.ndarray) -> pd.DataFrame:
 
 
 def summarize_method(method_dir: Path, method: str, fold_results: list[dict], test_tables: list[pd.DataFrame]) -> None:
+    """Write per-fold results, pooled test risks, KM plot, and summary JSON."""
     results_df = pd.DataFrame(fold_results)
     results_df.to_csv(method_dir / "results_per_fold.csv", index=False)
     all_test = pd.concat(test_tables, ignore_index=True)
@@ -207,11 +255,14 @@ def summarize_method(method_dir: Path, method: str, fold_results: list[dict], te
 
 
 def run_mean(input_dirs: dict[str, Path], folds: list[int], output_dir: Path) -> dict:
+    """Run unweighted mean late fusion across unimodal risk scores."""
     method_dir = ensure_dir(output_dir / "mean")
     fold_results = []
     test_tables = []
     for fold in folds:
         merged = load_fold_tables(input_dirs, fold, "test")
+
+        # Mean fusion treats each unimodal model equally.
         risk = merged[["rna_risk", "pathology_risk", "clinical_risk"]].to_numpy(float).mean(axis=1)
         risk_table = make_risk_output(merged, risk)
         c_index = concordance_index(risk_table["log_risk"].to_numpy(float), risk_table["Time"].to_numpy(float), risk_table["Event"].to_numpy(int))
@@ -232,6 +283,7 @@ def run_mean(input_dirs: dict[str, Path], folds: list[int], output_dir: Path) ->
 
 
 def run_learned_cox(input_dirs: dict[str, Path], folds: list[int], output_dir: Path) -> dict:
+    """Run learned Cox late fusion using train-fold unimodal risk scores."""
     method_dir = ensure_dir(output_dir / "learned_cox")
     fold_results = []
     test_tables = []
@@ -239,6 +291,9 @@ def run_learned_cox(input_dirs: dict[str, Path], folds: list[int], output_dir: P
         train = load_fold_tables(input_dirs, fold, "train")
         test = load_fold_tables(input_dirs, fold, "test")
         feature_cols = ["rna_risk", "pathology_risk", "clinical_risk"]
+
+        # Fit fusion weights on unimodal train risks, then evaluate once on the
+        # held-out test risks for the same outer fold.
         packed, fit_metadata = fit_learned_cox(
             train[feature_cols].to_numpy(float),
             train["Time"].to_numpy(float),

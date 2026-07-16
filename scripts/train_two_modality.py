@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
-"""Train two-modality concat Cox ablations with cross-validation."""
+"""
+Train two-modality Cox ablations with cross-validation
+======================================================
+
+Runs bimodal experiments for modality-pair ablations:
+
+  RNA + clinical
+  RNA + pathology
+  pathology + clinical
+
+Supported fusion modules follow the experiment config and include concat,
+scalar-gated, and low-rank bilinear fusion.
+
+Pipeline
+--------
+  load configs → select modality pair → build/read outer folds
+  prepare shared fold tensors → fit RNA extractor when RNA is used
+  train Cox model → save fold metrics, risk scores, summaries, and KM plot
+"""
 
 from __future__ import annotations
 

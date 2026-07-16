@@ -1,4 +1,22 @@
-"""Fold split helpers for reproducible experiments."""
+"""
+Fold split helpers for reproducible experiments
+===============================================
+
+Build the shared train/validation/test sample IDs used by every model family.
+
+Pipeline
+--------
+  prepare_fold_split(...):
+    read fixed outer fold assignment → choose one fold as test
+    remaining folds → inner stratified train/validation split
+
+Design rationale
+----------------
+* The fixed fold assignment controls the outer test split.
+* The validation split is generated only from the non-test samples.
+* All fusion methods can reuse the same FoldSplit object, keeping comparisons
+  fair across concat, gated, low-rank, SurvPGC, and late-fusion experiments.
+"""
 
 from __future__ import annotations
 

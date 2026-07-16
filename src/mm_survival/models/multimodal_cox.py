@@ -1,4 +1,27 @@
-"""Embedding-based multimodal Cox model."""
+"""
+Embedding-based trimodal Cox model
+==================================
+
+Wraps the modality-specific encoders, fusion module, and Cox survival head for
+RNA + clinical + pathology experiments.
+
+Pipeline
+--------
+  RNA matrix          → RNA extractor              → RNA embedding
+  clinical input      → clinical encoder           → clinical embedding
+  pathology tile bags → pathology MIL encoder      → pathology embedding
+                                                        ↓
+                                 concat/gated/low-rank fusion
+                                                        ↓
+                                             Cox head log-risk
+
+Design rationale
+----------------
+* The fusion module is selected from the experiment config.
+* Clinical inputs can be tabular covariates or token embeddings.
+* Pathology bags can have different tile counts, so they are encoded one sample
+  at a time before stacking sample-level embeddings.
+"""
 
 from __future__ import annotations
 
@@ -51,6 +74,9 @@ class MultimodalCoxModel(nn.Module):
         if clinical_source == "embedding":
             if clinical_token_count is None:
                 raise ValueError("clinical_token_count is required when clinical_source='embedding'.")
+
+            # Clinical embeddings are first projected token-wise, flattened, and
+            # then compressed to one patient-level clinical embedding.
             self.clinical_encoder = ClinicalEmbeddingEncoder(
                 token_count=clinical_token_count,
                 in_dim=clinical_dim,
@@ -61,6 +87,9 @@ class MultimodalCoxModel(nn.Module):
                 activation=clinical_activation,
             )
         elif clinical_source == "tabular":
+
+            # Tabular clinical features are already sample-level vectors, so an
+            # MLP encoder maps them directly to the shared clinical embedding.
             self.clinical_encoder = ClinicalEncoder(
                 in_dim=clinical_dim,
                 hidden_dims=clinical_hidden_dims,
@@ -105,6 +134,9 @@ class MultimodalCoxModel(nn.Module):
         clinical_emb = self.clinical_encoder(clinical)
         pathology_embs = []
         for bag in pathology_bags:
+
+            # Pathology bags are processed independently because each patient
+            # can have a different number of tile features.
             pathology_emb, _ = self.pathology_encoder(bag.to(device))
             pathology_embs.append(pathology_emb)
         pathology_emb = torch.stack(pathology_embs)
@@ -119,6 +151,9 @@ class MultimodalCoxModel(nn.Module):
     ) -> torch.Tensor:
         """Fuse modality embeddings, ignoring optional interpretability payloads."""
         fused = self.fusion(rna_emb, clinical_emb, pathology_emb, rna_mask=rna_mask)
+
+        # Some fusion modules return auxiliary outputs such as modality gates;
+        # the Cox head receives only the fused patient representation.
         if isinstance(fused, tuple):
             fused = fused[0]
         return fused

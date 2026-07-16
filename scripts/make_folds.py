@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Create stratified cross-validation fold assignments."""
+"""
+Create stratified cross-validation fold assignments
+===================================================
+
+Standalone utility for generating a fold_assignments.csv file from a labels CSV.
+
+Output format
+-------------
+  sample_id, fold
+
+Design rationale
+----------------
+* The same fold assignment file can be reused across all models to keep the
+  outer test folds identical.
+* Folds are stratified by event status to reduce event/censoring imbalance.
+"""
 
 from __future__ import annotations
 
@@ -44,6 +59,8 @@ def main() -> None:
     labels = load_labels(labels_path)
     sample_ids = labels.index.astype(str).tolist()
 
+    # Command-line arguments override config values, which is useful when making
+    # alternative fold files without editing local.yaml.
     n_splits = args.n_splits if args.n_splits is not None else int(cv_cfg.get("n_splits", 5))
     seed = args.seed if args.seed is not None else int(cv_cfg.get("seed", 42))
     folds = make_fold_assignments(sample_ids, labels, n_splits=n_splits, seed=seed)

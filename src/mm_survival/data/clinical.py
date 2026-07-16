@@ -1,4 +1,29 @@
-"""Clinical tabular and embedding loaders."""
+"""
+Clinical tabular and embedding loaders
+======================================
+
+Supports two clinical representations used by the survival models:
+
+  1. Tabular clinical covariates loaded from a CSV file.
+  2. Precomputed clinical text embeddings loaded from one .pt file per sample.
+
+Tabular preprocessing
+---------------------
+  fit_clinical_preprocessor(fit):
+    normalize missing sentinels → infer numeric/categorical columns
+    impute/standardize numeric features → one-hot encode categorical features
+    remove zero-variance columns
+
+  transform_clinical_table(df, meta):
+    apply the fitted metadata to validation/test data without refitting
+
+Design rationale
+----------------
+* Missing values are normalized from legacy -1 / "-1" sentinels to NaN.
+* Preprocessing metadata is fit on the training split only to avoid leakage.
+* Categorical levels and kept feature columns are frozen after fitting, so every
+  split has the same clinical feature dimension.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +63,9 @@ def _clean_clinical_features(df: pd.DataFrame) -> pd.DataFrame:
 def fit_clinical_preprocessor(fit: pd.DataFrame) -> dict[str, Any]:
     """Fit tabular clinical preprocessing metadata on the fit split only."""
     feature_df = _clean_clinical_features(fit)
+
+    # Column type inference is done on the fit split and then frozen for all
+    # validation/test transforms.
     numeric_cols = [col for col in feature_df.columns if infer_numeric(feature_df[col])]
     categorical_cols = [col for col in feature_df.columns if col not in numeric_cols]
 
@@ -47,6 +75,9 @@ def fit_clinical_preprocessor(fit: pd.DataFrame) -> dict[str, Any]:
     numeric_outputs = []
     for col in numeric_cols:
         values = pd.to_numeric(feature_df[col], errors="coerce")
+
+        # Median imputation and standardization parameters are estimated from
+        # the fit split only, preventing validation/test distribution leakage.
         median = float(values.median()) if values.notna().any() else 0.0
         filled = values.fillna(median)
         mean = float(filled.mean())
@@ -61,6 +92,9 @@ def fit_clinical_preprocessor(fit: pd.DataFrame) -> dict[str, Any]:
     categorical_outputs = []
     for col in categorical_cols:
         values = feature_df[col].fillna("Missing").astype("string")
+
+        # Store fit-split levels so unseen validation/test levels map to all
+        # zeros rather than changing the feature dimension.
         levels = sorted(values.unique().tolist())
         categorical_levels[col] = levels
         for level in levels:
@@ -68,6 +102,9 @@ def fit_clinical_preprocessor(fit: pd.DataFrame) -> dict[str, Any]:
     fit_cat = pd.concat(categorical_outputs, axis=1) if categorical_outputs else pd.DataFrame(index=feature_df.index)
 
     fit_processed = pd.concat([fit_num, fit_cat], axis=1)
+
+    # Drop constant features after encoding; they carry no information and can
+    # make very small clinical designs less stable.
     kept_features = fit_processed.columns[np.var(fit_processed.values.astype(float), axis=0) > 0.0].tolist()
 
     return {
@@ -146,6 +183,9 @@ def stack_clinical_embeddings(
     out = np.zeros((len(sample_ids), token_count, embedding_dim), dtype=np.float32)
     for row, sample_id in enumerate(sample_ids):
         emb = embeddings[sample_id].detach().cpu().numpy().astype(np.float32)
+
+        # Keep a fixed [tokens, dim] shape across samples by truncating longer
+        # embeddings and zero-padding shorter embeddings.
         n_tokens = min(emb.shape[0], token_count)
         n_dim = min(emb.shape[1], embedding_dim)
         out[row, :n_tokens, :n_dim] = emb[:n_tokens, :n_dim]

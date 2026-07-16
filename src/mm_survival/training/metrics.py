@@ -1,4 +1,15 @@
-"""Evaluation metrics for survival prediction."""
+"""
+Evaluation metrics for survival prediction
+==========================================
+
+Implements C-index utilities for model evaluation.
+
+C-index convention
+------------------
+For a comparable patient pair, the patient with the earlier observed event
+should have the higher predicted log-risk. A C-index of 0.5 corresponds to
+random ranking, while larger values indicate better risk ordering.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +24,9 @@ def concordance_index(risk: np.ndarray, time: np.ndarray, event: np.ndarray) -> 
     permissible = 0.0
     for i in range(len(risk)):
         for j in range(len(risk)):
+
+            # Pair is permissible when patient i had an observed event before
+            # patient j's follow-up time.
             if time[i] < time[j] and event[i] == 1:
                 permissible += 1
                 if risk[i] > risk[j]:
@@ -36,6 +50,9 @@ def bootstrap_c_index(
     for _ in range(n_boot):
         idx = rng.integers(0, len(risk), len(risk))
         if len(np.unique(event[idx])) < 2:
+
+            # Skip bootstrap samples without both event/censored classes because
+            # their C-index is not informative for uncertainty estimation.
             continue
         values.append(concordance_index(risk[idx], time[idx], event[idx]))
     if not values:

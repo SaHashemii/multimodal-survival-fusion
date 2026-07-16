@@ -1,4 +1,23 @@
-"""Two-modality Cox models for concat ablation experiments."""
+"""
+Two-modality Cox models for modality ablations
+==============================================
+
+Implements bimodal versions of the embedding-based survival models. These are
+used to test whether each modality pair improves or hurts prediction relative
+to unimodal and trimodal models.
+
+Supported modality pairs
+------------------------
+  RNA + clinical
+  RNA + pathology
+  pathology + clinical
+
+Supported fusion modes
+----------------------
+  concat: concatenate the two encoded modality embeddings
+  gated: learn one scalar gate per selected modality before concatenation
+  low-rank: learn one pairwise bilinear interaction between the two modalities
+"""
 
 from __future__ import annotations
 
@@ -57,6 +76,9 @@ class TwoModalityConcatCoxModel(nn.Module):
         if "rna" in self.modalities:
             if rna_extractor is None:
                 raise ValueError("rna_extractor is required when using RNA.")
+
+            # RNA is optional in bimodal ablations; build its extractor only for
+            # modality pairs that include RNA.
             self.rna_extractor = rna_extractor
             output_dims["rna"] = int(rna_extractor.output_dim)
 
@@ -65,6 +87,9 @@ class TwoModalityConcatCoxModel(nn.Module):
             if clinical_source == "embedding":
                 if clinical_token_count is None:
                     raise ValueError("clinical_token_count is required when clinical_source='embedding'.")
+
+                # Clinical embedding inputs keep the same token projection and
+                # flattening behavior used in trimodal experiments.
                 self.clinical_encoder = ClinicalEmbeddingEncoder(
                     token_count=clinical_token_count,
                     in_dim=clinical_dim,
@@ -75,6 +100,8 @@ class TwoModalityConcatCoxModel(nn.Module):
                     activation=clinical_activation,
                 )
             elif clinical_source == "tabular":
+
+                # Tabular clinical inputs are encoded with the clinical MLP.
                 self.clinical_encoder = ClinicalEncoder(
                     in_dim=clinical_dim,
                     hidden_dims=clinical_hidden_dims,
@@ -87,6 +114,9 @@ class TwoModalityConcatCoxModel(nn.Module):
             output_dims["clinical"] = clinical_emb_dim
 
         if "pathology" in self.modalities:
+
+            # Pathology is encoded from variable-length tile bags to one
+            # patient-level embedding before fusion.
             self.pathology_encoder = HEEncoder(
                 in_dim=pathology_in_dim,
                 emb_dim=pathology_emb_dim,
@@ -121,6 +151,9 @@ class TwoModalityConcatCoxModel(nn.Module):
         if "pathology" in self.modalities:
             pathology_embs = []
             for bag in pathology_bags:
+
+                # Each pathology bag can have a different tile count, so encode
+                # samples separately before stacking.
                 pathology_emb, _ = self.pathology_encoder(bag.to(device))
                 pathology_embs.append(pathology_emb)
             embeddings["pathology"] = torch.stack(pathology_embs)
@@ -134,6 +167,9 @@ class TwoModalityConcatCoxModel(nn.Module):
         device: torch.device | None = None,
     ) -> torch.Tensor:
         embeddings = self.encode_modalities(rna, clinical, pathology_bags, device=device)
+
+        # Preserve config modality order so the concatenated dimension matches
+        # the Cox head initialized in __init__.
         pieces = [embeddings[name] for name in self.modalities]
         return self.head(torch.cat(pieces, dim=-1))
 
@@ -166,6 +202,8 @@ class TwoModalityGatedCoxModel(TwoModalityConcatCoxModel):
         embeddings = self.encode_modalities(rna, clinical, pathology_bags, device=device)
         gated_pieces = []
         for name in self.modalities:
+
+            # One scalar gate is learned per selected modality and patient.
             gated_embedding, _ = self.gates[name](embeddings[name])
             gated_pieces.append(gated_embedding)
         return self.head(torch.cat(gated_pieces, dim=-1))
@@ -192,6 +230,9 @@ class TwoModalityLowRankBilinearCoxModel(TwoModalityConcatCoxModel):
         )
         dim1 = self.output_dims[self.modalities[0]]
         dim2 = self.output_dims[self.modalities[1]]
+
+        # Bimodal low-rank fusion has a single pairwise interaction block rather
+        # than the three interaction blocks used by trimodal low-rank fusion.
         self.fusion = LowRankBilinearFusion(dim1, dim2, rank=fusion_rank, out_dim=fusion_out_dim)
         self.output_dim = fusion_out_dim
         self.head = CoxHead(

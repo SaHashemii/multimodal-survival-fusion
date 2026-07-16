@@ -1,4 +1,22 @@
-"""Factory for multimodal fusion modules."""
+"""
+Factory for multimodal fusion modules
+=====================================
+
+Maps the fusion name in an experiment YAML file to the corresponding PyTorch
+module.
+
+Supported names
+---------------
+  concat
+  gated_concat
+  lowrank_bilinear
+
+Design rationale
+----------------
+* Training scripts should not need fusion-specific construction logic.
+* Adding a new fusion method only requires registering the module here and
+  defining its config fields in the experiment YAML.
+"""
 
 from __future__ import annotations
 
@@ -31,6 +49,9 @@ def build_fusion(
     if key not in FUSION_REGISTRY:
         raise ValueError(f"Unknown fusion method '{name}'. Choose from: {list(FUSION_REGISTRY)}")
     cls = FUSION_REGISTRY[key]
+
+    # Common modality dimensions come from the encoders; method-specific values
+    # such as rank or interaction output dims come from config.
     return cls(
         rna_dim=rna_dim,
         clinical_dim=clinical_dim,

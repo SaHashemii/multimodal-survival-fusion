@@ -1,4 +1,28 @@
-"""Unimodal Cox model wrappers."""
+"""
+Unimodal Cox model wrappers
+===========================
+
+Defines one-modality survival baselines for RNA, clinical, and pathology.
+
+Model families
+--------------
+  RNACoxModel:
+    RNA extractor → Cox head
+
+  ClinicalCoxModel:
+    tabular or embedding clinical encoder → Cox head
+
+  PathologyCoxModel:
+    tile-bag pathology MIL encoder → Cox head
+
+  PathologySlideCoxModel:
+    slide-level pathology embedding MLP → Cox head
+
+Design rationale
+----------------
+* Unimodal baselines show how much predictive signal each modality has alone.
+* They also provide the risk-score inputs used by late-fusion experiments.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +54,9 @@ class RNACoxModel(nn.Module):
         )
 
     def forward_all(self, rna: torch.Tensor) -> torch.Tensor:
+
+        # The RNA extractor performs feature selection/aggregation and returns
+        # one fixed-length embedding per patient.
         return self.head(self.rna_extractor(rna))
 
     def forward(self, rna: torch.Tensor) -> torch.Tensor:
@@ -63,6 +90,10 @@ class ClinicalCoxModel(nn.Module):
             if clinical_token_count is None:
                 raise ValueError("clinical_token_count is required when clinical_source='embedding'.")
             if clinical_pooling is None:
+
+                # Original clinical-embedding setup: project each token to a
+                # lower dimension, flatten all projected tokens, then compress
+                # to one patient-level clinical embedding.
                 self.encoder = ClinicalEmbeddingEncoder(
                     token_count=clinical_token_count,
                     in_dim=clinical_dim,
@@ -74,6 +105,9 @@ class ClinicalCoxModel(nn.Module):
                 )
                 head_in_dim = clinical_emb_dim
             else:
+
+                # Optional pooling encoder for clinical embeddings when a config
+                # requests mean/max/attention-style pooling instead of flattening.
                 self.encoder = ClinicalEmbeddingPoolingEncoder(
                     token_count=clinical_token_count,
                     in_dim=clinical_dim,
@@ -84,6 +118,9 @@ class ClinicalCoxModel(nn.Module):
                 )
                 head_in_dim = self.encoder.output_dim
         elif clinical_source == "tabular":
+
+            # Tabular clinical features are already patient-level vectors and
+            # are mapped directly to a clinical embedding by an MLP.
             self.encoder = ClinicalEncoder(
                 in_dim=clinical_dim,
                 hidden_dims=clinical_hidden_dims,
@@ -147,6 +184,9 @@ class PathologyCoxModel(nn.Module):
         for bag in pathology_bags:
             if device is not None:
                 bag = bag.to(device)
+
+            # Tile bags are variable-length, so each slide is encoded separately
+            # into one patient-level pathology embedding.
             embedding, _ = self.encoder(bag)
             risks.append(self.head(embedding))
         return torch.stack(risks)
@@ -174,6 +214,8 @@ class PathologySlideCoxModel(nn.Module):
         drop_cls = nn.AlphaDropout if pathology_activation == "selu" else nn.Dropout
         act_cls = nn.SELU if pathology_activation == "selu" else nn.ReLU
 
+        # PRISM-style inputs are already one vector per slide, so this encoder is
+        # a standard MLP rather than a tile-bag MIL aggregator.
         layers: list[nn.Module] = [nn.LayerNorm(pathology_in_dim), drop_cls(pathology_dropout)]
         prev = pathology_in_dim
         for hidden_dim in pathology_hidden_dims:

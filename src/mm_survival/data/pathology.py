@@ -1,4 +1,27 @@
-"""Pathology feature index and tensor loading utilities."""
+"""
+Pathology feature index and tensor loading utilities
+====================================================
+
+Loads pathology representations used by unimodal and multimodal survival
+models.
+
+Supported feature types
+-----------------------
+  UNI-style tile bags:
+    one .pt feature tensor per slide/sample with shape [tiles, feature_dim]
+
+  PRISM slide embeddings:
+    one .h5 file per slide/sample containing a single slide-level vector
+
+Design rationale
+----------------
+* UNI features are treated as bags of tile embeddings and can be deterministically
+  tile-capped for memory control.
+* PRISM features are already slide-level representations, so they are loaded as
+  one vector per sample rather than a tile bag.
+* Sample IDs are normalized from older 2U_/2B_ prefixes to 3U_/3B_ to match the
+  current label and split files.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +42,9 @@ def load_pathology_index(path: str | Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"{path} is missing required pathology index columns: {sorted(missing)}")
     df["sample_id"] = df["sample_id"].astype(str)
+
+    # Older pathology exports used 2U_/2B_ prefixes; labels and current split
+    # files use 3U_/3B_, so normalize IDs before intersecting modalities.
     df["sample_id"] = df["sample_id"].str.replace(r"^2U_", "3U_", regex=True)
     df["sample_id"] = df["sample_id"].str.replace(r"^2B_", "3B_", regex=True)
     df["feature_path"] = df["feature_path"].astype(str)
@@ -92,6 +118,9 @@ def cap_tiles(
     """Deterministically subsample tiles for a sample when over the cap."""
     if tile_cap is None or tile_cap <= 0 or feats.shape[0] <= tile_cap:
         return feats
+
+    # Hash sample_id + seed so tile subsampling is reproducible and independent
+    # of sample order or global RNG state.
     digest = hashlib.sha256(f"{sample_id}:{seed}".encode("utf-8")).digest()
     rng = np.random.default_rng(int.from_bytes(digest[:8], "little") % (2**32))
     idx = rng.choice(feats.shape[0], size=tile_cap, replace=False)
@@ -170,6 +199,9 @@ def load_prism_slide_feature_file(
         return None
 
     feats = torch.from_numpy(feats).float()
+
+    # PRISM is expected to be a single slide-level vector. Tile-bag tensors are
+    # handled by load_pathology_feature_file instead.
     if feats.ndim != 1 or feats.numel() == 0:
         print(f"[Pathology] WARN: invalid PRISM feature shape in {path}: {tuple(feats.shape)}")
         return None

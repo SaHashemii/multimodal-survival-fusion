@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
-"""Train SurvPGC-style multimodal Cox models with cross-validation."""
+"""
+Train SurvPGC-style multimodal Cox models with cross-validation
+===============================================================
+
+Runs the attention-based fusion model that represents RNA/omics, clinical, and
+pathology as tokens before bidirectional co-attention.
+
+RNA/omics options
+----------------
+  pathway: biological pathway RNA tokens from GMT files
+  category: biological-category RNA tokens
+  scfoundation: precomputed scFoundation embeddings
+
+Pipeline
+--------
+  load configs → build/read outer folds → construct omics token plan
+  sample/pad pathology tokens → stack clinical and omics tokens
+  train SurvPGC Cox model → save metrics, risk scores, summaries, and KM plot
+"""
 
 from __future__ import annotations
 

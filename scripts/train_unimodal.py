@@ -1,5 +1,22 @@
 #!/usr/bin/env python3
-"""Train unimodal Cox baselines with cross-validation."""
+"""
+Train unimodal Cox baselines with cross-validation
+==================================================
+
+Runs one-modality survival baselines for RNA, clinical, or pathology inputs.
+
+Supported unimodal inputs
+-------------------------
+  RNA: variance-filtered genes followed by an MLP Cox model
+  Clinical: tabular covariates or precomputed clinical text embeddings
+  Pathology: UNI-style tile bags or PRISM slide-level embeddings
+
+Pipeline
+--------
+  load configs → select modality → build/read outer folds
+  fit preprocessing only on fit split → train Cox model
+  save fold metrics, risk scores, summaries, checkpoints, and KM plot
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,28 @@
-"""Helpers for saving training artifacts."""
+"""
+Helpers for saving training artifacts
+=====================================
+
+Centralizes the output formats written by training scripts.
+
+Common artifacts
+----------------
+  history.csv:
+    per-epoch train/validation losses and C-index values
+
+  summary.json:
+    fold-level or experiment-level metrics and metadata
+
+  test_risk_scores.csv:
+    sample_id, log_risk, Event, and Time for downstream C-index/KM analysis
+
+  checkpoint.pt:
+    model state dict plus summary metadata
+
+Design rationale
+----------------
+* Keeping output schemas consistent lets unimodal, bimodal, trimodal, SurvPGC,
+  and late-fusion scripts share plotting and summary code.
+"""
 
 from __future__ import annotations
 
@@ -37,6 +61,9 @@ def write_risk_scores(
     path: str | Path,
 ) -> None:
     """Write per-sample risk scores to CSV."""
+
+    # This schema is reused by Kaplan-Meier plotting, result summaries, and
+    # late-fusion models that combine unimodal risk scores.
     pd.DataFrame(
         {
             "sample_id": sample_ids,
@@ -54,6 +81,9 @@ def save_checkpoint(
     extra: dict[str, Any] | None = None,
 ) -> None:
     """Save a model checkpoint with summary metadata."""
+
+    # Store both learned parameters and the run summary so a checkpoint remains
+    # interpretable without separately opening summary.json.
     payload: dict[str, Any] = {
         "model_state": model.state_dict(),
         "summary": summary,

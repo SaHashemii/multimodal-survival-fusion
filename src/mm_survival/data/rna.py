@@ -1,4 +1,25 @@
-"""RNA matrix loading and preprocessing helpers."""
+"""
+RNA matrix loading and preprocessing helpers
+===========================================
+
+Loads bulk RNA-seq matrices and applies simple train-only median imputation.
+
+Expected CSV format
+-------------------
+  rows: genes
+  columns: samples
+
+The loader transposes the matrix to the modeling format:
+
+  rows: samples
+  columns: genes
+
+Design rationale
+----------------
+* RNA imputation medians are fit on the training/fit split only.
+* Validation and test RNA values are transformed with the fitted medians, which
+  avoids leaking validation/test distributions into preprocessing.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +37,8 @@ def load_rna_matrix(path: str | Path) -> pd.DataFrame:
     """
     df = pd.read_csv(path, index_col=0)
     df.index = df.index.astype(str)
+
+    # Public RNA files are gene-by-sample; models use sample-by-gene tensors.
     rna = df.T
     rna.index.name = "sample_id"
     rna.columns = rna.columns.astype(str)
@@ -38,6 +61,9 @@ def impute_rna_from_train(
     val: pd.DataFrame | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, dict[str, float]]:
     """Fit medians on train and apply them to train/test/optional validation."""
+
+    # This helper is kept for code paths that work with explicit train/test/val
+    # dataframes instead of the FoldSplit-based tensor preparation utilities.
     medians = fit_rna_medians(train)
     x_train = transform_rna_with_medians(train, medians)
     x_test = transform_rna_with_medians(test, medians)

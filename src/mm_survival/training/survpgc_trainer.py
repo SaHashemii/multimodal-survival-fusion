@@ -1,4 +1,25 @@
-"""Trainer for SurvPGC-style token models."""
+"""
+Trainer for SurvPGC-style token models
+======================================
+
+Training loop for the attention-based SurvPGC model family.
+
+Training pipeline
+-----------------
+  1. Build full-batch, random-batch, or event-aware Cox batches.
+  2. Optionally apply deterministic omics/RNA dropout to training patients.
+  3. Optimize the Cox partial likelihood.
+  4. Evaluate validation data with complete modalities.
+  5. If robust_missing_rna=True, evaluate validation again with all omics/RNA
+     removed and use the average validation C-index for model selection.
+
+Design rationale
+----------------
+* Omics masks follow the same convention as RNA masks in embedding models:
+  1 means observed, 0 means missing.
+* Validation and testing use deterministic complete-vs-missing comparisons,
+  not random dropout, so performance drops are directly comparable.
+"""
 
 from __future__ import annotations
 
@@ -35,6 +56,9 @@ def _make_batches(
     min_events_per_batch: int,
     device: torch.device,
 ) -> list[torch.Tensor]:
+
+    # Mirrors the embedding trainer so SurvPGC can be compared under the same
+    # batching strategy and hyperparameter settings.
     if training_style in {"full_batch", "baseline_stream"}:
         return [torch.arange(n_samples, device=device)]
     if training_style == "event_batch":
@@ -53,6 +77,9 @@ def _forward_all(
     pathology_mask: torch.Tensor,
     omics_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
+
+    # Ordinary SurvPGC runs do not pass an omics mask. Missing-RNA experiments
+    # pass the mask so the model can suppress the omics-pathology branch.
     if omics_mask is None:
         return model.forward_all(pathology, omics, clinical, pathology_mask)
     return model.forward_all(pathology, omics, clinical, pathology_mask, omics_mask=omics_mask)
@@ -100,6 +127,10 @@ def train_survpgc(
         )
         for idx in batches:
             batch_omics_mask = omics_train_mask[idx] if omics_train_mask is not None else None
+
+            # Apply RNA/omics dropout only during training. The same mask is
+            # forwarded to the model so attention branches know which omics
+            # tokens are unavailable.
             batch_omics = apply_rna_mask(omics_train[idx], batch_omics_mask)
             optimizer.zero_grad()
             risk = _forward_all(
@@ -119,6 +150,9 @@ def train_survpgc(
 
         model.eval()
         with torch.no_grad():
+
+            # Training metrics are reported under the same observed/missing
+            # omics pattern used for optimization.
             train_eval_omics = apply_rna_mask(omics_train, omics_train_mask)
             train_risk_tensor = _forward_all(
                 model,
@@ -138,6 +172,9 @@ def train_survpgc(
             val_missing_ci = math.nan
             val_avg_ci = math.nan
             if val_tensors is not None:
+
+                # Complete-modality validation keeps pathology, clinical, and
+                # omics/RNA available.
                 val_risk_tensor = model.forward_all(pathology_val, omics_val, clinical_val, mask_val)
                 val_loss = float(cox_ph_loss(val_risk_tensor, event_val, time_val).detach().cpu())
                 val_ci = concordance_index(
@@ -148,6 +185,9 @@ def train_survpgc(
                 val_complete_loss = val_loss
                 val_complete_ci = val_ci
                 if robust_missing_rna:
+
+                    # Missing-RNA validation evaluates the same validation
+                    # patients again with all omics/RNA tokens removed.
                     missing_val_mask = missing_rna_mask_like(omics_val)
                     missing_val_omics = apply_rna_mask(omics_val, missing_val_mask)
                     missing_val_risk = _forward_all(
@@ -192,6 +232,8 @@ def train_survpgc(
             }
         )
 
+        # Standard runs select lowest validation loss. Robust missing-RNA runs
+        # select best average C-index across complete and missing-RNA validation.
         improved = monitor_score > best_score if robust_missing_rna else monitor_loss < best_loss
         if improved:
             best_loss = monitor_loss
@@ -218,6 +260,9 @@ def evaluate_survpgc(
     pathology, omics, clinical, mask, time, event = tensors
     model.eval()
     with torch.no_grad():
+
+        # omics_mask=None gives complete-modality evaluation; an all-zero mask
+        # gives missing-RNA evaluation.
         eval_omics = apply_rna_mask(omics, omics_mask)
         risk = _forward_all(model, pathology, eval_omics, clinical, mask, omics_mask=omics_mask).detach().cpu().numpy()
     time_np = time.detach().cpu().numpy().astype(float)

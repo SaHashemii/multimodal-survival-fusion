@@ -1,3 +1,28 @@
+"""
+SurvPGC-style co-attention model
+================================
+
+Implements a token-based multimodal Cox model using pathology, clinical, and
+omics/RNA tokens.
+
+Pipeline
+--------
+  pathology tile/slide tokens → projection
+  clinical text tokens        → projection
+  omics/RNA tokens            → projection or grouped RNA encoder
+
+  omics + pathology   → multimodal co-attention branch
+  clinical + pathology → multimodal co-attention branch
+
+  pooled branch outputs → Cox MLP head → log-risk score
+
+Missing RNA behavior
+--------------------
+When omics_mask is provided, omics tokens are zeroed and the omics-pathology
+branch is masked. The clinical-pathology branch remains active, allowing the
+model to make predictions from available pathology and clinical information.
+"""
+
 from __future__ import annotations
 
 import torch
@@ -105,6 +130,9 @@ class GroupedRNAEncoder(nn.Module):
         tokens = []
         for name, encoder in zip(self.index_buffer_names, self.encoders):
             indices = getattr(self, name)
+
+            # Each group encoder sees only the genes assigned to one biological
+            # category/pathway and returns one token for that group.
             group_expr = rna.index_select(dim=1, index=indices).float()
             tokens.append(encoder(group_expr))
         return torch.stack(tokens, dim=1)
@@ -188,6 +216,10 @@ class SurvPGCUnifiedCox(nn.Module):
         omics_embed = self.omics_projection(self.omics_tokens(omics))
         clinic_embed = self.clinical_projection(clinical.float())
         if omics_mask is not None:
+
+            # Zero omics tokens before attention when RNA is unavailable for a
+            # patient. The attention mask below also prevents these tokens from
+            # contributing inside the omics-pathology branch.
             sample_mask = omics_mask.reshape(-1, 1, 1).to(device=omics_embed.device, dtype=omics_embed.dtype)
             omics_embed = omics_embed * sample_mask
 
@@ -196,6 +228,9 @@ class SurvPGCUnifiedCox(nn.Module):
 
         omics_path_mask = None
         if omics_mask is not None:
+
+            # The omics-pathology branch masks only omics tokens. Pathology
+            # tokens stay visible so the branch shape remains unchanged.
             omics_keep = omics_mask.reshape(-1, 1).to(device=pathology.device, dtype=torch.bool).expand(-1, self.num_omics)
             path_keep = torch.ones(path_embed.shape[:2], dtype=torch.bool, device=pathology.device)
             omics_path_mask = torch.cat([omics_keep, path_keep], dim=1)
@@ -211,6 +246,9 @@ class SurvPGCUnifiedCox(nn.Module):
         omics_post = mm_omics_path[:, : self.num_omics, :].mean(dim=1)
         path_post_omics = mm_omics_path[:, self.num_omics :, :].mean(dim=1)
         if omics_mask is not None:
+
+            # Remove the RNA-dependent pooled outputs from the final fused
+            # representation while keeping clinical-pathology outputs active.
             sample_mask = omics_mask.reshape(-1, 1).to(device=omics_post.device, dtype=omics_post.dtype)
             omics_post = omics_post * sample_mask
             path_post_omics = path_post_omics * sample_mask

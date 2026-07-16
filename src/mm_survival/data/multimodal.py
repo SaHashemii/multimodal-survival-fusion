@@ -1,4 +1,28 @@
-"""Assembly utilities for common multimodal cohorts."""
+"""
+Assembly utilities for common multimodal cohorts
+================================================
+
+Loads labels, RNA, clinical data, and pathology features, then keeps only the
+patients that are available across all required modalities.
+
+Pipeline
+--------
+  load label/RNA/clinical/pathology index files
+       ↓
+  intersect sample IDs across modalities
+       ↓
+  load pathology feature tensors for the common samples
+       ↓
+  drop samples with missing or invalid pathology features
+
+Design rationale
+----------------
+* Multimodal fusion requires aligned patients across all selected modalities.
+* Pathology tensors are loaded after the first ID intersection because the index
+  can contain entries whose feature files are missing or malformed.
+* missing_summary records modality counts and dropped pathology samples so each
+  run can report how many patients were retained.
+"""
 
 from __future__ import annotations
 
@@ -60,6 +84,8 @@ def load_common_multimodal_dataset(
     rna = load_rna_matrix(rna_path)
     pathology = load_pathology_index(pathology_index_path)
 
+    # The same data loader supports either tabular clinical covariates or
+    # precomputed clinical text embeddings, selected by the experiment config.
     if clinical_source == "embedding":
         clinical_embeddings_path = _required_path(data_root, data_cfg, "clinical_embeddings")
         clinical_data = load_clinical_embeddings(clinical_embeddings_path)
@@ -79,6 +105,8 @@ def load_common_multimodal_dataset(
         clinical_label: clinical_ids,
         "pathology_index": set(pathology.index.astype(str)),
     }
+
+    # First retain only samples whose IDs exist in all metadata tables.
     common = sorted(set.intersection(*modality_ids.values()))
     missing_summary: dict[str, Any] = {
         "modality_counts": {name: len(ids) for name, ids in modality_ids.items()},
@@ -92,6 +120,8 @@ def load_common_multimodal_dataset(
         seed=seed,
         tile_cap=pathology_tile_cap,
     )
+
+    # Then remove samples whose pathology feature tensors could not be loaded.
     sample_ids = sorted(set(common) & set(pathology_features))
     missing_summary["invalid_pathology_features"] = invalid_pathology
     missing_summary["retained_samples"] = len(sample_ids)

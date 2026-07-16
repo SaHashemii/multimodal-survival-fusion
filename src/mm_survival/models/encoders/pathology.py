@@ -1,4 +1,27 @@
-"""Pathology feature encoders."""
+"""
+Pathology feature encoders
+==========================
+
+Encodes variable-length pathology tile feature bags into one patient-level
+embedding for survival prediction.
+
+Aggregation options
+-------------------
+  gated:
+    gated attention MIL pooling over tile embeddings
+
+  mean:
+    average tile embeddings
+
+  mean+std:
+    concatenate tile mean and tile standard deviation
+
+Design rationale
+----------------
+* Whole-slide feature bags can contain different numbers of tiles per patient.
+* The encoder pools each tile bag into a fixed-length slide/patient embedding.
+* Gated attention also returns tile weights, which can be inspected later.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +44,9 @@ class GatedAttentionMIL(nn.Module):
         if h.ndim != 2:
             raise ValueError(f"GatedAttentionMIL expects (tiles, dim), got {tuple(h.shape)}")
         h_norm = self.drop(self.norm(h.float()))
+
+        # Gated attention scores each tile using tanh and sigmoid branches before
+        # normalizing scores into slide-level attention weights.
         logits = self.w(torch.tanh(self.v(h_norm)) * torch.sigmoid(self.u(h_norm))).squeeze(-1)
         weights = torch.softmax(logits - logits.max(), dim=0)
         pooled = torch.sum(weights.unsqueeze(1) * h_norm, dim=0)
@@ -63,9 +89,14 @@ class HEEncoder(nn.Module):
         if self.aggregator == "gated":
             pooled, weights = self.pool(h)
         elif self.aggregator == "mean":
+
+            # Mean pooling is a non-attention baseline over tile features.
             pooled = h.float().mean(dim=0)
             weights = None
         else:
+
+            # mean+std preserves both average morphology signal and tile-level
+            # feature variability in the slide representation.
             pooled = torch.cat([h.float().mean(dim=0), h.float().std(dim=0, unbiased=False)], dim=0)
             weights = None
         return self.proj(pooled), weights

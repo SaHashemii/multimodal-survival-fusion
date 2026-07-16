@@ -1,4 +1,26 @@
-"""Configuration and path helpers."""
+"""
+Configuration and path helpers
+==============================
+
+Loads YAML configs and resolves selectable data entries into concrete paths.
+
+Config pattern
+--------------
+  configs/data/local.yaml:
+    defines available labels, clinical embeddings, pathology features, and
+    omics embeddings for a local machine or server
+
+  configs/experiments/*.yaml:
+    selects which named data source to use through fields such as label_name,
+    clinical_embedding_name, pathology_feature_name, and omics_embedding_name
+
+Design rationale
+----------------
+* Local paths live in the data config, not in every experiment config.
+* Experiment configs can switch datasets/embeddings by name while sharing the
+  same training code.
+* Relative paths are resolved against the configured data root or repo root.
+"""
 
 from __future__ import annotations
 
@@ -40,6 +62,8 @@ def _select_config_value(data_cfg: dict[str, Any], exp_data_cfg: dict[str, Any],
     if not isinstance(value, dict):
         return value
 
+    # If a data field is a mapping, the selector can come from the experiment
+    # config first, then fall back to the default in the data config.
     selected = exp_data_cfg.get(selector_key, data_cfg.get(selector_key))
     if selected is None:
         raise ValueError(f"Data config {key} is a mapping; define data.{selector_key} in the data or experiment config.")
@@ -53,6 +77,9 @@ def materialize_data_config(data_cfg: dict[str, Any], exp_data_cfg: dict[str, An
     """Resolve selectable data config entries into the concrete paths used by loaders."""
     exp_data_cfg = exp_data_cfg or {}
     resolved = dict(data_cfg)
+
+    # Convert named choices such as labels.without_urolife or conch5 clinical
+    # embeddings into the actual relative/absolute paths used by data loaders.
     resolved["labels"] = _select_config_value(data_cfg, exp_data_cfg, "labels", "label_name")
     resolved["clinical_embeddings"] = _select_config_value(
         data_cfg,
@@ -64,6 +91,9 @@ def materialize_data_config(data_cfg: dict[str, Any], exp_data_cfg: dict[str, An
 
     pathology = data_cfg.get("pathology")
     if isinstance(pathology, dict):
+
+        # Pathology has extra metadata beyond a single path because UNI and
+        # PRISM use different file layouts and representations.
         selected = exp_data_cfg.get("pathology_feature_name", data_cfg.get("pathology_feature_name"))
         if selected is None:
             raise ValueError("Data config pathology is a mapping; define data.pathology_feature_name in the data or experiment config.")

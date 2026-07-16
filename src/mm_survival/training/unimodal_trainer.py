@@ -1,4 +1,23 @@
-"""Trainers for unimodal Cox models."""
+"""
+Trainers for unimodal Cox models
+================================
+
+Shared training and evaluation loops for RNA-only, clinical-only, and
+pathology-only Cox baselines.
+
+Pipeline
+--------
+  build batches → forward model → Cox partial likelihood loss
+  validation loss/C-index → early stopping → restore best checkpoint
+
+Design rationale
+----------------
+* Tensor-based unimodal models cover RNA and clinical inputs.
+* Pathology models use a separate loop because each patient can have a
+  variable-length tile bag instead of one fixed-size tensor row.
+* Unimodal risk-score tables are saved in the same format as multimodal outputs,
+  enabling direct comparison and late-fusion experiments.
+"""
 
 from __future__ import annotations
 
@@ -27,6 +46,9 @@ def _make_batches(
     min_events_per_batch: int,
     device: torch.device,
 ) -> list[torch.Tensor]:
+
+    # Match the batching options used by multimodal trainers so unimodal and
+    # multimodal baselines can be compared under the same optimization style.
     if training_style in {"full_batch", "baseline_stream"}:
         return [torch.arange(n_samples, device=device)]
     if training_style == "event_batch":
@@ -68,6 +90,9 @@ def train_tensor_unimodal(
         losses = []
         batches = _make_batches(len(x_train), event_train, training_style, batch_size, min_events_per_batch, device)
         for idx in batches:
+
+            # RNA and clinical unimodal inputs are fixed-size tensors, so a batch
+            # is selected by normal tensor indexing.
             optimizer.zero_grad()
             risk = model.forward_all(x_train[idx])
             loss = cox_ph_loss(risk, event_train[idx], time_train[idx])
@@ -110,6 +135,8 @@ def train_tensor_unimodal(
                 "monitor_loss": monitor_loss,
             }
         )
+        # Standard unimodal runs select the checkpoint with lowest validation
+        # loss; if no validation split is provided, train batch loss is used.
         if monitor_loss < best_loss:
             best_loss = monitor_loss
             best_state = deepcopy(model.state_dict())
@@ -154,6 +181,9 @@ def train_pathology_unimodal(
         losses = []
         batches = _make_batches(len(pathology_train), event_train, training_style, batch_size, min_events_per_batch, device)
         for idx in batches:
+
+            # Pathology bags are Python lists of variable-length tensors, so the
+            # batch is gathered manually instead of by tensor indexing.
             batch_bags = [pathology_train[i] for i in idx.detach().cpu().tolist()]
             optimizer.zero_grad()
             risk = model.forward_all(batch_bags, device=device)
@@ -197,6 +227,8 @@ def train_pathology_unimodal(
                 "monitor_loss": monitor_loss,
             }
         )
+        # Keep the best pathology checkpoint by validation loss, matching the
+        # tensor unimodal trainer.
         if monitor_loss < best_loss:
             best_loss = monitor_loss
             best_state = deepcopy(model.state_dict())
@@ -223,6 +255,9 @@ def evaluate_tensor_unimodal(
     time_np = time.detach().cpu().numpy().astype(float)
     event_np = event.detach().cpu().numpy().astype(int)
     c_index = concordance_index(risk, time_np, event_np)
+
+    # Risk tables use a shared schema across unimodal and multimodal models so
+    # downstream summaries, KM plots, and late fusion can reuse them.
     return c_index, pd.DataFrame({"sample_id": sample_ids, "log_risk": risk, "Event": event_np, "Time": time_np})
 
 

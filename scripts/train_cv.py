@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Train embedding-based multimodal Cox models with cross-validation."""
+"""
+Train embedding-based trimodal Cox models with cross-validation
+===============================================================
+
+Runs pathology + RNA + clinical survival models using embedding-based fusion
+modules such as concatenation, scalar-gated fusion, and low-rank bilinear
+fusion.
+
+Pipeline
+--------
+  load configs → find common multimodal samples → build/read outer folds
+  prepare fold-specific tensors → fit RNA extractor on fit split
+  train Cox model → evaluate complete and optional missing-RNA test settings
+  save metrics, risk scores, checkpoints, fold summaries, and KM plot
+"""
 
 from __future__ import annotations
 
